@@ -3,7 +3,6 @@ dist
 .env
 .env.local
 *.local
-*.tsbuildinfo
 .DS_Store
 test-results
 playwright-report

@@ -8,7 +8,11 @@ import { defineConfig, devices } from '@playwright/test'
 export default defineConfig({
   testDir: './e2e',
   // live.spec.ts hits the real network and only runs on explicit request
-  testIgnore: [process.env.RA_VISUAL ? 'never-ignore-visual' : '**/visual.spec.ts', ...(process.env.RA_LIVE ? [] : ['**/live.spec.ts'])],
+  testIgnore: [
+    process.env.RA_VISUAL ? 'never-ignore-visual' : '**/visual.spec.ts',
+    ...(process.env.RA_LIVE ? [] : ['**/live.spec.ts']),
+    ...(process.env.RA_DEPLOYED ? [] : ['**/deployed.spec.ts']),
+  ],
   fullyParallel: false,
   workers: 1,
   retries: 0,
@@ -27,14 +31,19 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 900 } },
     },
   ],
-  webServer: {
-    // `npm run build` runs first as a separate step; the suite always tests the
-    // production bundle, never the dev server.
-    command: 'npx vite preview --port 4173 --host 127.0.0.1',
-    url: 'http://127.0.0.1:4173',
-    reuseExistingServer: true,
-    timeout: 120_000,
-    stdout: 'ignore',
-    stderr: 'pipe',
-  },
+  // A remote verification run must not start a local server.
+  ...(process.env.RA_DEPLOYED
+    ? {}
+    : {
+        webServer: {
+          // `npm run build` runs first as a separate step; the suite always
+          // tests the production bundle, never the dev server.
+          command: 'npx vite preview --port 4173 --host 127.0.0.1',
+          url: 'http://127.0.0.1:4173',
+          reuseExistingServer: true,
+          timeout: 120_000,
+          stdout: 'ignore' as const,
+          stderr: 'pipe' as const,
+        },
+      }),
 })
