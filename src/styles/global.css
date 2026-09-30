@@ -1882,3 +1882,41 @@ button {
 .money-actions {
   margin-top: 12px;
 }
+
+/* ---- terms: type a number instead of hunting for a preset ---- */
+
+.term-input {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: center;
+  width: 68px;
+  min-height: 34px;
+  padding: 4px 6px;
+  background: var(--paper);
+  color: var(--ink);
+  border: var(--line-thin) solid var(--ink);
+}
+
+.term-input:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* ---- reference detail: open only if you want it ---- */
+
+.details {
+  border: var(--line-thin) solid var(--ink);
+  padding: 10px 12px;
+  background: var(--paper-2, #f2efe6);
+}
+
+.details > summary {
+  cursor: pointer;
+  list-style: revert;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.details > summary::marker {
+  color: var(--gray-2, #6b6b6b);
+}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect } from 'react'
 import { LandingView } from './views/Landing'
 import { DashboardView } from './views/Dashboard'
 import { AdvanceView } from './views/Advance'
@@ -6,11 +6,11 @@ import { GrowView } from './views/Grow'
 import { LiquidityView } from './views/Liquidity'
 import { HowView } from './views/HowItWorks'
 import { Badge, Notice } from './components/ui'
+import { WalletMessages } from './components/WalletMessages'
 import { useDispatch, useSession, type ViewId } from './session/store'
 import { useLiveData } from './session/useLiveData'
 import { loadDemoArtBatch } from './session/demoArt'
 import { useWallet } from './wallet/useWallet'
-import { ROBINHOOD_CHAIN } from './wallet/connect'
 
 /**
  * NAVIGATION
@@ -284,50 +284,5 @@ function WalletButton() {
     >
       CONNECT WALLET
     </button>
-  )
-}
-
-function WalletMessages() {
-  const wallet = useWallet()
-  const s = wallet.state
-
-  const body = useMemo(() => {
-    switch (s.status) {
-      case 'unsupported':
-        return { tone: 'warn' as const, text: `${s.error} ${s.hint ?? ''}` }
-      case 'rejected':
-        return { tone: 'warn' as const, text: `${s.error ?? 'Connection cancelled.'} ${s.hint ?? ''}` }
-      case 'disconnected':
-        return { tone: 'warn' as const, text: `${s.error ?? 'Wallet disconnected.'} ${s.hint ?? ''}` }
-      case 'wrong-network':
-      case 'switch-unavailable':
-        return { tone: 'error' as const, text: `${s.error ?? ''} ${s.hint ?? ''}` }
-      case 'error':
-        return { tone: 'error' as const, text: `${s.error ?? ''} ${s.hint ?? ''}` }
-      case 'connected':
-        return { tone: 'info' as const, text: `Connected read-only on ${ROBINHOOD_CHAIN.chainName}. This demo never requests token or NFT approvals.` }
-      default:
-        return null
-    }
-  }, [s])
-
-  if (!body) return null
-
-  return (
-    <div style={{ marginTop: 8 }} className="stack">
-      <Notice tone={body.tone}>
-        {body.text}{' '}
-        {s.status === 'wrong-network' || s.status === 'switch-unavailable' ? (
-          <button type="button" className="btn btn-sm" style={{ marginTop: 6 }} onClick={wallet.switchNetwork} data-testid="switch-network">
-            SWITCH NETWORK
-          </button>
-        ) : null}{' '}
-        {s.status === 'error' ? (
-          <button type="button" className="btn btn-sm" style={{ marginTop: 6 }} onClick={wallet.retry} data-testid="retry-wallet">
-            TRY AGAIN
-          </button>
-        ) : null}
-      </Notice>
-    </div>
   )
 }

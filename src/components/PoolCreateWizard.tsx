@@ -13,11 +13,10 @@ import { BPS_SCALE, formatBpsAsPercent, formatRF, parseRF } from '../math/rf'
 import { MAX_LP_PREMIUM_BPS, MAX_WETH_SHARE_BPS } from '../economy/marketLimits'
 import {
   describeTerms,
-  minOwnerContributionBps,
   validateTerms,
-  MAX_FINANCE_PRESETS,
   PREMIUM_PRESETS,
   PROTOCOL_STREAM_DURATION_MS,
+  DEFAULT_MAX_FINANCE_BPS,
   RF_ROUTING_PRESETS,
   WETH_SHARE_PRESETS,
 } from '../economy/pools/terms'
@@ -26,7 +25,7 @@ import type { PoolAccess, PoolKind, PoolTerms } from '../economy/pools/types'
 import { nextUserPoolId, useMarket, useMarketDispatch } from '../session/marketStore'
 
 export const MARKET_LIMITS_COPY =
-  `Demo limits: LP premium 0%–${formatBpsAsPercent(MAX_LP_PREMIUM_BPS, 0)}, WETH share 0%–${formatBpsAsPercent(MAX_WETH_SHARE_BPS, 0)}. A pool with unattractive terms may simply never be chosen — that is the market working.`
+  `You can set any number, including an absurd one. A pool priced out of the market simply gets no borrowers — that is the market working.`
 
 const ACTIONS: { id: GrowthActionKind; label: string }[] = [
   { id: 'activate', label: 'Genesis activation' },
@@ -65,7 +64,9 @@ export function PoolCreateWizard({
   const [streamPremiumBps, setStreamPremiumBps] = useState(400n)
   const [feeBps, setFeeBps] = useState(100n)
   const [growthPremiumBps, setGrowthPremiumBps] = useState(500n)
-  const [maxFinanceBps, setMaxFinanceBps] = useState(7_500n)
+  // A pool funds what an action needs. There is deliberately no "maximum
+  // financing" knob: refusing to lend more would not protect the pool, since
+  // every borrower repays the same RF premium on whatever they took.
   const [rfRoutingBps, setRfRoutingBps] = useState(7_500n)
   const [wethShareBps, setWethShareBps] = useState(0n)
   const [actions, setActions] = useState<GrowthActionKind[]>(ACTIONS.map((a) => a.id))
@@ -78,7 +79,7 @@ export function PoolCreateWizard({
     maxAdvanceShareBps: BPS_SCALE,
     maxStreamPositionWei: 50_000n * 10n ** 18n,
     growthPremiumBps,
-    growthMaxFinanceBps: maxFinanceBps,
+    growthMaxFinanceBps: DEFAULT_MAX_FINANCE_BPS,
     growthRfRoutingBps: rfRoutingBps,
     growthWethShareBps: wethShareBps,
     growthMaxPositionWei: 50_000n * 10n ** 18n,
@@ -105,8 +106,7 @@ export function PoolCreateWizard({
       right={<Badge provenance="simulated" label={`STEP ${step + 1} OF ${steps.length}`} large />}
     >
       <Note>
-        This creates a SIMULATED pool stored in this browser only. No real RF moves and no approvals are
-        requested.
+        A SIMULATED pool, stored in this browser only. No real RF moves. {MARKET_LIMITS_COPY}
       </Note>
 
       <ol className="tiny" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', listStyle: 'none', padding: 0, margin: '10px 0' }}>
@@ -339,15 +339,6 @@ export function PoolCreateWizard({
                 testIdPrefix="growth-premium"
               />
               <BpsPicker
-                label="MAX FINANCING"
-                hint={`Borrower must pay at least ${formatBpsAsPercent(minOwnerContributionBps(terms))} themselves.`}
-                value={maxFinanceBps}
-                presets={MAX_FINANCE_PRESETS}
-                max={BPS_SCALE}
-                onChange={setMaxFinanceBps}
-                testIdPrefix="growth-max-finance"
-              />
-              <BpsPicker
                 label="RF REWARD ROUTING"
                 hint="Share of the Friend's future RF rewards that repays you."
                 value={rfRoutingBps}
@@ -539,6 +530,20 @@ function BpsPicker({
   testIdPrefix: string
 }) {
   const step = presets.length > 0 ? presets[1]! - presets[0]! : 100n
+  // Typed input is kept as a raw string so a half-typed "12." or "" does not
+  // fight the cursor. It is only committed once it parses.
+  const [typed, setTyped] = useState('')
+
+  function commitTyped() {
+    const raw = typed.trim().replace('%', '')
+    if (raw === '') { setTyped(''); return }
+    const n = Number(raw)
+    if (!Number.isFinite(n) || n < 0) { setTyped(''); return }
+    const bps = Math.round(n * 100) // 12.5% -> 1250 bps
+    onChange(bps > max ? max : BigInt(bps))
+    setTyped('')
+  }
+
   return (
     <div style={{ marginBottom: 10 }}>
       <div className="row" style={{ justifyContent: 'space-between' }}>
@@ -563,6 +568,8 @@ function BpsPicker({
           </button>
         ))}
       </div>
+
+      {/* Steppers AND free typing: presets are a shortcut, not the only way. */}
       <div className="row-tight" style={{ marginTop: 5 }}>
         <button
           type="button"
@@ -573,6 +580,21 @@ function BpsPicker({
         >
           −
         </button>
+        <input
+          className="term-input"
+          inputMode="decimal"
+          aria-label={`${label} percent`}
+          placeholder={formatBpsAsPercent(value).replace('%', '')}
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          onBlur={commitTyped}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commitTyped() }
+            if (e.key === 'Escape') setTyped('')
+          }}
+          data-testid={`${testIdPrefix}-input`}
+        />
+        <span className="tiny muted">%</span>
         <button
           type="button"
           className="btn btn-ghost btn-sm"
@@ -583,9 +605,8 @@ function BpsPicker({
           +
         </button>
       </div>
-      <p className="tiny muted" style={{ margin: '4px 0 0' }}>
-        {hint}
-      </p>
+
+      {hint ? <p className="tiny muted" style={{ margin: '4px 0 0' }}>{hint}</p> : null}
     </div>
   )
 }

@@ -12,6 +12,7 @@
 import { Device } from '../components/Device'
 import { useDispatch, useSession, selectedFriend, sessionNowMs } from '../session/store'
 import { useWallet } from '../wallet/useWallet'
+import { WalletMessages } from '../components/WalletMessages'
 import { HERO_HEADLINE, NOT_A_LOAN_SHORT, WHAT_IT_IS } from '../content/copy'
 
 export function LandingView() {
@@ -52,6 +53,9 @@ export function LandingView() {
             >
               CONNECT WALLET
             </button>
+
+            {/* Feedback appears HERE, next to the button that was pressed. */}
+            {wallet.state.status !== 'idle' ? <WalletMessages inline /> : null}
           </div>
         </div>
 

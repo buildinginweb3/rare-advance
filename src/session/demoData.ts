@@ -46,12 +46,35 @@ interface DemoFriendSpec {
 }
 
 /**
- * The demo wallet mirrors a real Rare Friends holder: ten active Genesis at
- * 2,000,000 weight, one hardwired active Gen 1, one permanent Gen 4 that lost
- * activation on transfer, and one temporary Gen 6. The token ids and states are
- * real and were read onchain; the balances and streams are SIMULATED.
+ * The demo wallet mirrors a real Rare Friends holder.
+ *
+ * Every token id and every generation below was READ FROM THE CHAIN via
+ * Generations.generation(tokenId) / Genesis tokenURI. Two entries previously
+ * claimed generations the chain does not agree with (#41220 and #4975); they
+ * now use verified tokens #25 and #436.
+ *
+ * The wallet holds BOTH a Genesis (#500) and a hardwired Generation 2 (#503).
+ * The Generation 2 leads, because Genesis is fully weighted and cannot change
+ * reward weight: leading with Genesis made the Grow screen look empty.
+ *
+ * Balances and streams remain SIMULATED.
  */
 const DEMO_SPECS: DemoFriendSpec[] = [
+  {
+    // A real, hardwired Generation 2. Selected first so that GROW always has a
+    // valid Rare Friends action to model: Genesis is fully weighted and cannot
+    // grow, so leading with one made the Grow screen look empty.
+    collection: 'Generations',
+    tokenId: '503',
+    generation: 2,
+    tier: 0,
+    activated: true,
+    claimableRf: '21480.551902',
+    claimableWeth: '0.019884201',
+    walletRf: '128.75',
+    walletWeth: '0.14',
+    artSeeds: [13, 5],
+  },
   {
     collection: 'Genesis',
     tokenId: '500',
@@ -102,7 +125,7 @@ const DEMO_SPECS: DemoFriendSpec[] = [
   },
   {
     collection: 'Generations',
-    tokenId: '4975',
+    tokenId: '436',
     generation: 6,
     tier: null,
     activated: false,
@@ -115,7 +138,7 @@ const DEMO_SPECS: DemoFriendSpec[] = [
   },
   {
     collection: 'Generations',
-    tokenId: '41220',
+    tokenId: '25',
     generation: 3,
     tier: 2,
     activated: true,

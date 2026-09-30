@@ -16,17 +16,29 @@ import { MAX_WETH_SHARE_BPS, MAX_LP_PREMIUM_BPS } from '../marketLimits'
 
 export const BPS_MAX = BPS_SCALE
 
-/** What a creator picks from for the WETH participation term. */
-export const WETH_SHARE_PRESETS = [0n, 250n, 500n, 1_000n, 1_500n, 2_000n] as const
+/** What a creator picks from for the WETH participation term, up to 100%. */
+export const WETH_SHARE_PRESETS = [0n, 2_500n, 5_000n, 7_500n, 10_000n] as const
 
-/** What a creator picks from for LP premium. */
-export const PREMIUM_PRESETS = [300n, 400n, 500n, 600n, 700n] as const
+/**
+ * What a creator picks from for LP premium.
+ *
+ * The top range is far beyond any sane price. That is intentional: a pool may
+ * price itself out of the market, and seeing that happen is more honest than
+ * forbidding the number.
+ */
+export const PREMIUM_PRESETS = [300n, 500n, 1_000n, 2_500n, 5_000n] as const
 
-/** What a creator picks from for maximum Growth financing. */
-export const MAX_FINANCE_PRESETS = [5_000n, 6_500n, 7_500n, 8_000n, 9_000n, 10_000n] as const
+/**
+ * How much of a Growth action a pool may finance.
+ *
+ * This is NOT a creator setting and is deliberately absent from the pool wizard.
+ * A pool funds what an action needs; capping that would not make the pool
+ * safer, because every borrower repays the same premium on whatever they took.
+ */
+export const DEFAULT_MAX_FINANCE_BPS = 10_000n
 
-/** What a creator picks from for RF repayment routing. */
-export const RF_ROUTING_PRESETS = [6_500n, 7_000n, 7_500n, 8_000n] as const
+/** What a creator picks from for RF repayment routing, up to 100%. */
+export const RF_ROUTING_PRESETS = [5_000n, 6_500n, 7_500n, 9_000n, 10_000n] as const
 
 /** Rare Friends streams last seven days; there is no other supported mechanism. */
 export const PROTOCOL_STREAM_DURATION_MS = 7n * 24n * 60n * 60n * 1000n
@@ -70,7 +82,7 @@ export function validateTerms(terms: PoolTerms): TermsValidation {
     warnings.push('That Growth RF premium is very high. Borrowers may skip this pool.')
   }
   if (terms.growthMaxFinanceBps <= 0n || terms.growthMaxFinanceBps > BPS_SCALE) {
-    errors.push('Maximum financing must be greater than 0% and at most 100%.')
+    errors.push('Financing share must be greater than 0% and at most 100%.')
   } else if (terms.growthMaxFinanceBps > 9_000n) {
     warnings.push('Financing more than 90% of an action leaves very little owner alignment.')
   }
@@ -166,8 +178,7 @@ export function describeTerms(terms: PoolTerms, kind: 'stream' | 'growth'): Term
   }
   return [
     { label: 'LP premium on financed RF', value: pct(terms.growthPremiumBps) },
-    { label: 'Maximum financing', value: pct(terms.growthMaxFinanceBps) },
-    { label: 'Owner pays at least', value: pct(minOwnerContributionBps(terms)) },
+    { label: 'Borrower pays upfront', value: pct(minOwnerContributionBps(terms)) },
     { label: 'RF rewards → repayment', value: pct(terms.growthRfRoutingBps) },
     { label: 'WETH rewards → pool', value: pct(terms.growthWethShareBps) },
   ]

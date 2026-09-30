@@ -12,27 +12,30 @@ import { BPS_SCALE } from '../math/rf'
 
 /**
  * Maximum LP premium a creator may request, on either market.
- * 25% is deliberately generous: the point is to let the market show that a
- * punitive pool simply gets no borrowers.
+ *
+ * 100% is deliberately far beyond anything sensible. The point is to let the
+ * market show that a punitive pool simply gets no borrowers, rather than
+ * capping the number a creator is even allowed to imagine.
  */
-export const MAX_LP_PREMIUM_BPS = 2_500n
+export const MAX_LP_PREMIUM_BPS = 10_000n
 
 /**
  * Maximum WETH participation, as a PRODUCT cap.
  *
- * This is the single most important guardrail in the whole market: WETH
- * participation is a temporary LP compensation term, and it must never be able
- * to approach a permanent royalty on a Friend. 25% of modeled WETH rewards,
- * ending the instant RF repayment completes.
+ * A pool may now ask for the whole modeled WETH stream, which is a real and
+ * sometimes reasonable trade: an expensive financing that is certain to be
+ * repaid may be worth far more than half a year of WETH. Participation is still
+ * TEMPORARY and ends the instant RF repayment completes, so even a 100% share
+ * cannot become a permanent royalty on a Friend.
  */
-export const MAX_WETH_SHARE_BPS = 2_500n
+export const MAX_WETH_SHARE_BPS = 10_000n
 
 /**
  * Maximum TOTAL WETH participation across concurrently outstanding Growth
- * positions held by one Friend. Split or concurrent financing can never take a
- * Friend's WETH beyond this.
+ * positions held by one Friend. A single position may take up to the cap above;
+ * splitting or stacking concurrent financing can never exceed it.
  */
-export const MAX_TOTAL_WETH_PARTICIPATION_BPS = 2_500n
+export const MAX_TOTAL_WETH_PARTICIPATION_BPS = 10_000n
 
 /** Maximum single financing position the product allows a pool to open. */
 export const MAX_POSITION_RF_WEI = 1_000_000n * 10n ** 18n

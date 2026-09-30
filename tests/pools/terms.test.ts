@@ -23,7 +23,6 @@ import {
 } from '../../src/economy/pools/engine'
 import { defaultTerms, publicAccess } from '../../src/economy/pools/seed'
 import {
-  MAX_FINANCE_PRESETS,
   PREMIUM_PRESETS,
   WETH_SHARE_PRESETS,
   describeTerms,
@@ -31,6 +30,7 @@ import {
   minOwnerContributionBps,
   totalWethParticipationBps,
   validateTerms,
+  DEFAULT_MAX_FINANCE_BPS,
 } from '../../src/economy/pools/terms'
 import type { Pool, PoolTerms } from '../../src/economy/pools/types'
 
@@ -61,12 +61,18 @@ describe('validateTerms — pure, returns errors, never throws', () => {
     expect(validateTerms(defaultTerms({ growthPremiumBps: -1n })).ok).toBe(false)
   })
 
-  it('rejects a premium above the product maximum', () => {
+  it('allows a punitive premium, because the market should show it being ignored', () => {
+    // 100% premium is reachable only with a zero Rare Advance fee: the
+    // premium and the fee together may never consume the whole face value.
+    expect(validateTerms(defaultTerms({ streamPremiumBps: 9_999n, rareAdvanceFeeBps: 0n })).ok).toBe(true)
     expect(validateTerms(defaultTerms({ streamPremiumBps: 9_999n })).ok).toBe(false)
+    // 100% would leave the holder nothing, which is the one hard line
+    expect(validateTerms(defaultTerms({ streamPremiumBps: 10_000n, rareAdvanceFeeBps: 0n })).ok).toBe(false)
+    expect(validateTerms(defaultTerms({ streamPremiumBps: 10_001n })).ok).toBe(false)
   })
 
   it('rejects premium plus fee that would leave the holder nothing', () => {
-    const r = validateTerms(defaultTerms({ streamPremiumBps: 9_800n, rareAdvanceFeeBps: 300n }))
+    const r = validateTerms(defaultTerms({ streamPremiumBps: 9_900n, rareAdvanceFeeBps: 100n }))
     expect(r.ok).toBe(false)
     expect(r.errors.join(' ')).toMatch(/leave the holder something/i)
   })
@@ -78,9 +84,14 @@ describe('validateTerms — pure, returns errors, never throws', () => {
     expect(validateTerms(defaultTerms({ maxAdvanceShareBps: 10_001n })).ok).toBe(false)
   })
 
-  it('rejects a WETH share above the product cap', () => {
-    expect(validateTerms(defaultTerms({ growthWethShareBps: 2_501n })).ok).toBe(false)
-    expect(validateTerms(defaultTerms({ growthWethShareBps: 2_500n })).ok).toBe(true)
+  it('allows WETH participation up to 100%, and no further', () => {
+    expect(validateTerms(defaultTerms({ growthWethShareBps: 10_000n })).ok).toBe(true)
+    expect(validateTerms(defaultTerms({ growthWethShareBps: 10_001n })).ok).toBe(false)
+  })
+
+  it('allows RF routing up to 100%, and no further', () => {
+    expect(validateTerms(defaultTerms({ growthRfRoutingBps: 10_000n })).ok).toBe(true)
+    expect(validateTerms(defaultTerms({ growthRfRoutingBps: 10_001n })).ok).toBe(false)
   })
 
   it('rejects a pool that could finance no action at all', () => {
@@ -105,9 +116,7 @@ describe('validateTerms — pure, returns errors, never throws', () => {
     for (const share of WETH_SHARE_PRESETS) {
       expect(validateTerms(defaultTerms({ growthWethShareBps: share })).ok, `weth ${share}`).toBe(true)
     }
-    for (const finance of MAX_FINANCE_PRESETS) {
-      expect(validateTerms(defaultTerms({ growthMaxFinanceBps: finance })).ok, `finance ${finance}`).toBe(true)
-    }
+    expect(validateTerms(defaultTerms({ growthMaxFinanceBps: DEFAULT_MAX_FINANCE_BPS })).ok).toBe(true)
   })
 
   it('maxTerms is reachable, so the ceiling is not a lie', () => {
@@ -163,7 +172,7 @@ describe('the engine enforces the validator, not just the wizard', () => {
   it('refuses to clone a pool onto invalid terms', () => {
     const p = poolWith(defaultTerms())
     expect(() =>
-      clonePoolWithNewTerms(p, 'p2', 'you', 'You', RF(1000), defaultTerms({ growthWethShareBps: 9_999n }), publicAccess(), 0),
+      clonePoolWithNewTerms(p, 'p2', 'you', 'You', RF(1000), defaultTerms({ growthWethShareBps: 10_001n }), publicAccess(), 0),
     ).toThrow(PoolError)
   })
 })

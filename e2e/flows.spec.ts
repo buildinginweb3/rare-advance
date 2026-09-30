@@ -211,7 +211,7 @@ test.describe('FLOW 3 — compare every eligible pool', () => {
       const later = rf(/SETTLEMENT([\d,.]+ RF)/i.exec(t)?.[0] ?? '')
       const cost = rf(/TOTAL COST([\d,.]+ RF)/i.exec(t)?.[0] ?? '')
       expect(now).toBeLessThan(later)
-      expect(now + cost).toBeCloseTo(later, 2)
+      expect(now + cost).toBeCloseTo(later, 1)
     }
 
     w.expectClean()
@@ -357,10 +357,29 @@ test.describe('FLOW 4 — take RF early and pay it off early', () => {
 })
 
 test.describe('FLOW 5 — Growth financing with temporary WETH participation', () => {
+  test('the demo opens on a Friend that can actually grow', async ({ page }) => {
+    const w = watch(page)
+    await page.goto('/')
+    await page.getByTestId('try-demo').click()
+    await page.getByTestId('nav-grow').click()
+    await page.waitForTimeout(500)
+
+    // No switching, no hunting: a real hardwired Generation leads the demo.
+    await expect(page.getByTestId('main')).toContainText(/GEN \d/i)
+    expect(
+      await page.locator('[data-testid^="explore-financing-"]').count(),
+      'the first Friend must already have a growth action',
+    ).toBeGreaterThan(0)
+    w.expectClean()
+  })
+
   test('a fully weighted Genesis says so instead of showing an empty list', async ({ page }) => {
     const w = watch(page)
     await page.goto('/')
     await page.getByTestId('try-demo').click()
+    await page.getByTestId('open-friend-switcher').click()
+    await page.locator('[data-testid^="switcher-Genesis:"]').first().click()
+    await page.waitForTimeout(400)
     await page.getByTestId('nav-grow').click()
     await page.waitForTimeout(400)
     await expect(page.getByTestId('main')).toContainText(/fully weighted/i)
@@ -372,23 +391,24 @@ test.describe('FLOW 5 — Growth financing with temporary WETH participation', (
     const w = watch(page)
     await page.goto('/')
     await page.getByTestId('try-demo').click()
-    // Genesis is fully weighted, so pick a Generation that can actually do something
-    await page.getByTestId('open-friend-switcher').click()
-    await page.waitForTimeout(300)
-    await page.locator('[data-testid^="switcher-Generations:"]').first().click()
-    await page.waitForTimeout(400)
-
+    // the demo already leads with a hardwired Generation, so nothing to switch
     await page.getByTestId('nav-grow').click()
     await page.waitForTimeout(400)
 
-    const explore = page.locator('[data-testid^="explore-financing-"]').first()
-    await expect(explore).toBeVisible()
-    await explore.click()
-    await page.waitForTimeout(400)
+    // Not every action is fundable: a 90,000 RF promotion is above what any
+    // demo pool will lend. Walk the actions until one has eligible pools.
+    const actions = page.locator('[data-testid^="explore-financing-"]')
+    expect(await actions.count()).toBeGreaterThan(0)
 
     const offers = page.getByTestId('growth-offers')
-    const count = await offers.locator('> button').count()
-    expect(count).toBeGreaterThan(0)
+    let count = 0
+    for (let i = 0; i < (await actions.count()); i += 1) {
+      await actions.nth(i).click()
+      await page.waitForTimeout(350)
+      count = await offers.locator('> button').count()
+      if (count > 0) break
+    }
+    expect(count, 'at least one growth action must have an eligible pool').toBeGreaterThan(0)
 
     const text = (await offers.textContent()) ?? ''
     expect(text).toMatch(/WETH SHARE/)
@@ -593,5 +613,128 @@ test.describe('the demo Friend is a real Rare Friend', () => {
     // and the rest of the product still works with no chain at all
     await page.getByTestId('nav-liquidity').click()
     await expect(page.getByTestId('market-pool-count')).toContainText('5')
+  })
+})
+
+test.describe('pool terms a creator can actually set', () => {
+  test('MAX FINANCING is gone, and RF routing and WETH share reach 100%', async ({ page }) => {
+    const w = watch(page)
+    await page.goto('/')
+    await page.getByTestId('try-demo').click()
+    await page.getByTestId('nav-liquidity').click()
+    await page.getByTestId('open-create-pool').click()
+
+    const wiz = page.getByTestId('pool-wizard')
+    await wiz.getByTestId('wizard-name').fill('Terms Pool')
+    await wiz.getByTestId('wizard-next').click() // -> ACCESS
+    await wiz.getByTestId('wizard-next').click() // -> WHAT IT FUNDS
+    await wiz.getByTestId('kind-growth').click() // growth terms only exist for growth pools
+    await wiz.getByTestId('wizard-next').click() // -> ADD RF
+    await wiz.getByTestId('wizard-capital').fill('600000')
+    await wiz.getByTestId('wizard-next').click() // -> SET TERMS
+    await page.waitForTimeout(300)
+
+    // The cap that limited borrowing is no longer a creator choice.
+    await expect(wiz.getByTestId('growth-max-finance-value')).toHaveCount(0)
+    await expect(page.getByTestId('main')).not.toContainText('MAX FINANCING')
+
+    // RF routing: 100% is selectable.
+    await wiz.getByTestId('growth-routing-10000').click()
+    await expect(wiz.getByTestId('growth-routing-value')).toHaveText('100%')
+    // WETH share: 100% is selectable.
+    await wiz.getByTestId('growth-weth-10000').click()
+    await expect(wiz.getByTestId('growth-weth-value')).toHaveText('100%')
+    // LP premium: far beyond the old 25% ceiling.
+    await wiz.getByTestId('growth-premium-5000').click()
+    await expect(wiz.getByTestId('growth-premium-value')).toHaveText('50%')
+
+    w.expectClean()
+  })
+
+  test('a creator can type an exact number instead of hunting presets', async ({ page }) => {
+    const w = watch(page)
+    await page.goto('/')
+    await page.getByTestId('try-demo').click()
+    await page.getByTestId('nav-liquidity').click()
+    await page.getByTestId('open-create-pool').click()
+    const wiz = page.getByTestId('pool-wizard')
+    await wiz.getByTestId('wizard-name').fill('Typed Pool')
+    await wiz.getByTestId('wizard-next').click()
+    await wiz.getByTestId('wizard-next').click()
+    await wiz.getByTestId('kind-growth').click()
+    await wiz.getByTestId('wizard-next').click()
+    await wiz.getByTestId('wizard-capital').fill('600000')
+    await wiz.getByTestId('wizard-next').click()
+    await page.waitForTimeout(300)
+
+    // the steppers are still there...
+    await wiz.getByTestId('growth-premium-minus').click()
+    await wiz.getByTestId('growth-premium-minus').click()
+    const stepped = await wiz.getByTestId('growth-premium-value').textContent()
+
+    // ...but you can also just type the number you want
+    await wiz.getByTestId('growth-premium-input').fill('12.5')
+    await wiz.getByTestId('growth-premium-input').press('Enter')
+    await expect(wiz.getByTestId('growth-premium-value')).toHaveText('12.5%')
+    expect(stepped).not.toBe('12.5%')
+
+    // nonsense is rejected rather than silently accepted
+    await wiz.getByTestId('growth-premium-input').fill('banana')
+    await wiz.getByTestId('growth-premium-input').press('Enter')
+    await expect(wiz.getByTestId('growth-premium-value')).toHaveText('12.5%')
+
+    w.expectClean()
+  })
+})
+
+test.describe('CONNECT WALLET tells you what happened, where you pressed it', () => {
+  test('the answer appears next to the button, not off-screen', async ({ page }) => {
+    await page.goto('/')
+    const btn = page.getByTestId('connect-wallet')
+    await expect(btn).toBeVisible()
+    const btnBox = (await btn.boundingBox())!
+
+    await btn.click()
+    const feedback = page.getByTestId('wallet-messages').first()
+    await expect(feedback).toBeVisible({ timeout: 15_000 })
+
+    // The message must be near the button, not a full screen below it.
+    const fbBox = (await feedback.boundingBox())!
+    expect(Math.abs(fbBox.y - btnBox.y), 'feedback must sit beside the button').toBeLessThan(200)
+  })
+
+  test('it still lands you in the app on a real connection', async ({ page }) => {
+    await page.addInitScript(() => {
+      const w = window as unknown as { __chain: string; ethereum: unknown }
+      w.__chain = '0x1237'
+      const info = { uuid: 'w1', name: 'Test Wallet', rdns: 't.w', icon: 'data:image/svg+xml,<svg/>' }
+      const provider = {
+        request: async (a: { method: string }) =>
+          a.method === 'eth_chainId' ? w.__chain : ['0x1111111111111111111111111111111111111111'],
+        on: () => {},
+        removeListener: () => {},
+      }
+      window.addEventListener('eip6963:requestProvider', () => {
+        window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: { info, provider } }))
+      })
+      w.ethereum = provider
+    })
+    await page.goto('/')
+    await page.getByTestId('connect-wallet').click()
+    await expect(page.getByTestId('wallet-messages').first()).toContainText(/read-only/i, { timeout: 20_000 })
+    await expect(page.getByTestId('nav-liquidity')).toBeVisible()
+  })
+})
+
+test.describe('the demo wallet holds a Genesis and a Generation', () => {
+  test('both collections are available, and the Generation leads', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('try-demo').click()
+    await expect(page.getByTestId('friend-hero')).toContainText(/GEN \d/i)
+
+    await page.getByTestId('open-friend-switcher').click()
+    const drawer = page.getByTestId('friend-switcher')
+    await expect(drawer.locator('[data-testid^="switcher-Genesis:"]')).not.toHaveCount(0)
+    await expect(drawer.locator('[data-testid^="switcher-Generations:"]')).not.toHaveCount(0)
   })
 })

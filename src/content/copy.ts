@@ -61,10 +61,10 @@ export const HOW_HEADLINE = "Tomorrow's rewards. Today's liquidity."
 export const ACTIVATION_HERO_CAPTION = 'ACTIVATE NOW. PAY FROM FUTURE REWARDS.'
 
 export const NOT_A_LOAN = [
-  'This is a REWARD ADVANCE: the sale of an already-streaming RF receivable at a discount.',
-  'It is not a debt, not borrowing against an NFT floor, not collateral, not LTV, not liquidation.',
-  'There is no monthly repayment, no credit score and no margin call.',
-  'The selected Rare Friend’s stream is the financed asset.',
+  'A sale of an already-streaming RF receivable, at a discount.',
+  'Not a debt. Not collateral. No LTV, no liquidation, no margin call.',
+  'No monthly repayment and no credit score.',
+  'The Friend’s reward stream is the financed asset.',
 ] as const
 
 export const HOW_IT_WORKS = [

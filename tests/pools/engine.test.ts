@@ -246,15 +246,13 @@ describe('opening a Stream Advance', () => {
   })
 
   it('refuses to even create terms that leave the holder nothing', () => {
-    // the rate cap bites first, which is the tighter guarantee
-    expect(() => makePool({ streamPremiumBps: 9_900n, rareAdvanceFeeBps: 200n })).toThrow(
-      /premium must be between/i,
+    // premium + fee together may never consume the whole face value
+    expect(() => makePool({ streamPremiumBps: 10_000n, rareAdvanceFeeBps: 100n })).toThrow(
+      /leave the holder something/i,
     )
-    // and premium + fee together may never consume the whole face value
-    expect(() => makePool({ streamPremiumBps: 2_400n, rareAdvanceFeeBps: 100n })).not.toThrow()
-    expect(() => makePool({ streamPremiumBps: 2_400n, rareAdvanceFeeBps: 100n, maxAdvanceShareBps: 0n })).toThrow(
-      /maximum advance/i,
-    )
+    // a punitive premium on its own is allowed: the market rejects it, not the app
+    expect(() => makePool({ streamPremiumBps: 9_900n, rareAdvanceFeeBps: 0n })).not.toThrow()
+    expect(() => makePool({ maxAdvanceShareBps: 0n })).toThrow(/maximum advance/i)
   })
 })
 
@@ -290,9 +288,18 @@ describe('opening Growth financing', () => {
     expect(pos.maxLpPremiumWei).not.toBe(pos.protocolBurnWei)
   })
 
-  it('enforces the maximum financing share', () => {
-    const p = growth({ growthMaxFinanceBps: 7_500n })
-    expect(() => open(p, { ownerContributionWei: RF(1_000) })).toThrow(/must contribute more/i)
+  it('a pool with no financing cap funds the whole action cost', () => {
+    const q = growth({ growthMaxFinanceBps: 10_000n })
+    const pos = open(q, { ownerContributionWei: 0n }).positions[0]!
+    if (pos.kind !== 'growth') throw new Error('unreachable')
+    // the borrower contributed nothing, so the pool covers all 10,000 RF
+    expect(pos.principalWei).toBe(RF(10_000))
+    expect(pos.ownerContributionWei).toBe(0n)
+  })
+
+  it('still refuses to finance nothing at all', () => {
+    const p = growth({ growthMaxFinanceBps: 10_000n })
+    expect(() => open(p, { ownerContributionWei: RF(10_000) })).toThrow(/nothing left to finance/i)
   })
 
   it('enforces eligible actions', () => {
@@ -312,18 +319,19 @@ describe('opening Growth financing', () => {
     expect(() => open(p, { actionCostWei: RF(10_000) })).toThrow(/available liquidity/i)
   })
 
-  it('caps total concurrent WETH participation for one Friend', () => {
-    // first position takes 20%
-    let p = growth({ growthWethShareBps: 2_000n })
-    p = open(p, { actionKind: 'hardwire' })
-    expect(p.positions[0]).toBeTruthy()
-    // a second on the same Friend at 20% would total 40%, over the 25% product cap
+  it('allows a 100% WETH share, and still refuses to stack two of them', () => {
+    let p = open(growth({ growthWethShareBps: 10_000n }), { actionKind: 'hardwire' })
+    expect(p.positions).toHaveLength(1)
+    // a second concurrent position would take more than the whole stream
     expect(() => open(p, { actionKind: 'hardwire' })).toThrow(/weth share would exceed/i)
-    // a second with a lower share is fine
-    const q = growth({ growthWethShareBps: 500n })
-    let p2 = open(q, { actionKind: 'hardwire' })
-    p2 = open(p2, { actionKind: 'hardwire', id: 'pos2' })
-    expect(p2.positions).toHaveLength(2)
+  })
+
+  it('two half shares may together take the whole stream, but not more', () => {
+    let p = open(growth({ growthWethShareBps: 5_000n }), { actionKind: 'hardwire' })
+    p = open(p, { actionKind: 'hardwire', id: 'pos2' })
+    expect(p.positions).toHaveLength(2)
+    // a third would exceed the cap
+    expect(() => open(p, { actionKind: 'hardwire', id: 'pos3' })).toThrow(/weth share would exceed/i)
   })
 })
 

@@ -12,7 +12,7 @@
 import { useMemo, useState, type CSSProperties } from 'react'
 import { Badge, Lcd, Note, Notice, Panel, SectionTitle, Stat } from '../components/ui'
 import { formatBpsAsPercent, formatRF, parseRF } from '../math/rf'
-import { MARKET_LIMITS_COPY, PoolCreateWizard } from '../components/PoolCreateWizard'
+import { PoolCreateWizard } from '../components/PoolCreateWizard'
 import {
   canContribute,
   lpAvailableWei,
@@ -186,13 +186,9 @@ export function LiquidityView() {
         </div>
         <div style={{ marginTop: 8 }}>
           <Note>
-            No yield is promised and no APY is shown, because a short advance cannot honestly be annualised.
-            What is real is the RF premium, the discount and the remaining stream duration. A pool may sit
-            unused: contributing RF does not guarantee it is ever deployed.
+            No APY is shown: a short advance cannot honestly be annualised. What is real is the premium, the
+            discount and the time left. A pool may sit unused.
           </Note>
-        </div>
-        <div style={{ marginTop: 6 }}>
-          <Note>{MARKET_LIMITS_COPY}</Note>
         </div>
       </Panel>
     </div>
@@ -231,7 +227,7 @@ function PoolRow({ pool, onOpen }: { pool: Pool; onOpen: () => void }) {
           <Term label="Available" value={`${formatRF(pool.cashRfWei, 0)} RF`} />
           <Term label="LP premium" value={formatBpsAsPercent(pool.terms.streamPremiumBps)} />
           <Term label="WETH share" value={formatBpsAsPercent(pool.terms.growthWethShareBps)} />
-          <Term label="Max finance" value={formatBpsAsPercent(pool.terms.growthMaxFinanceBps)} />
+          <Term label="RF routing" value={formatBpsAsPercent(pool.terms.growthRfRoutingBps)} />
           <Term label="Open" value={String(openPositions(pool).length)} />
           <Term label="Settled" value={String(settledPositions(pool).length)} />
         </div>

@@ -6,10 +6,36 @@
  * mechanics, the market model, the data sources and the honest limitations.
  */
 
+import type { ReactNode } from 'react'
 import { Badge, Note, Notice, Panel, Stat } from '../components/ui'
 import { PROTOCOL_RULES, REWARD_SHARE_FORMULA, REWARD_STREAM_DURATION_SECONDS } from '../protocol/rareFriendsConfig'
 import { ROBINHOOD_CHAIN } from '../wallet/connect'
 import { FLOW, EXT_FLOW, TWO_SIDES } from '../content/explainer'
+
+/**
+ * Reference detail that a judge can open but does not have to read.
+ * Keeping this closed by default is the difference between a page you can skim
+ * and a page you have to sit through.
+ */
+function DetailsPanel({
+  title,
+  right,
+  children,
+}: {
+  title: string
+  right?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <details className="details">
+      <summary className="h3" style={{ fontSize: 9 }}>
+        {title}
+        {right ? <span style={{ marginLeft: 8 }}>{right}</span> : null}
+      </summary>
+      <div style={{ paddingTop: 8 }}>{children}</div>
+    </details>
+  )
+}
 
 export function HowView() {
   return (
@@ -149,7 +175,7 @@ export function HowView() {
         </div>
       </Panel>
 
-      <Panel title="PROTOCOL MECHANICS">
+      <DetailsPanel title="PROTOCOL MECHANICS">
         <div className="grid-2">
           <div className="panel-recess">
             <Stat label="Reward share" value={REWARD_SHARE_FORMULA} />
@@ -165,9 +191,9 @@ export function HowView() {
             </ul>
           </div>
         </div>
-      </Panel>
+      </DetailsPanel>
 
-      <Panel title="LIMITATIONS" right={<Badge provenance="simulated" label="READ THIS" />}>
+      <DetailsPanel title="LIMITATIONS" right={<Badge provenance="simulated" label="READ THIS" />}>
         <ul className="tiny" style={{ margin: 0, paddingLeft: 16, lineHeight: 1.85 }}>
           <li>All financing, liquidity, settlement and burns are SIMULATED. No real RF or WETH moves.</li>
           <li>No lending contract, no escrow and no assignment exist. Rare Advance cannot currently intercept protocol reward payments.</li>
@@ -177,18 +203,18 @@ export function HowView() {
           <li>Transfer-while-financed behaviour is undefined and must be specified in any production design.</li>
           <li>Pools created here are stored in this browser only and are not a global listing.</li>
         </ul>
-      </Panel>
+      </DetailsPanel>
 
-      <Panel title="PRODUCTION REQUIREMENTS">
+      <DetailsPanel title="PRODUCTION REQUIREMENTS">
         <Note>
           A production version would need audited liquidity-pool contracts, real RF deposits and withdrawals,
           position-level LP accounting, RF and WETH reward routing, settlement enforcement, access control for
           private pools, defined transfer-while-financed behaviour, growth-action underwriting, protection
           against protocol reward changes, and production fee accounting. None of this exists today.
         </Note>
-      </Panel>
+      </DetailsPanel>
 
-      <Panel title="DATA SOURCES">
+      <DetailsPanel title="DATA SOURCES">
         <ul className="tiny" style={{ margin: 0, paddingLeft: 16, lineHeight: 1.85 }}>
           <li>
             Robinhood Chain mainnet, chain {ROBINHOOD_CHAIN.chainId} — read only
@@ -202,7 +228,7 @@ export function HowView() {
           Progression example: a Genesis at 2,000,000 reward weight out of 20,000,000 total active weight is
           10%. If 1,000 RF streams, that Friend earns 100 RF of it.
         </p>
-      </Panel>
+      </DetailsPanel>
 
       <Notice tone="warn">
         This demo never requests a signature, a transaction, a token approval or an NFT approval.
