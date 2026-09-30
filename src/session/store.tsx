@@ -29,7 +29,7 @@ import type {
   WalletState,
 } from '../types'
 
-export type ViewId = 'dashboard' | 'advance' | 'grow' | 'liquidity' | 'how'
+export type ViewId = 'landing' | 'dashboard' | 'advance' | 'grow' | 'liquidity' | 'how'
 
 export interface Notice {
   id: string
@@ -39,6 +39,12 @@ export interface Notice {
 
 export interface SessionState {
   mode: SessionMode
+  /**
+   * False only for the very first paint. The landing sells the idea in one
+   * screen; TRY DEMO or CONNECT WALLET clears it and the holder dashboard takes
+   * over. It is never shown again in the session.
+   */
+  landed: boolean
   view: ViewId
   selectedFriendKey: string | null
   friends: FriendPosition[]
@@ -59,11 +65,14 @@ function demoState(): SessionState {
   const friends = buildDemoFriends(DEMO_EPOCH_MS)
   return {
     mode: 'demo',
-    view: 'dashboard',
+    landed: false,
+    view: 'landing',
     selectedFriendKey: friends[0]?.key ?? null,
     friends,
     live,
-    wallet: { status: 'connected', address: DEMO_WALLET_PLACEHOLDER, chainId: 4663, error: null },
+    // Demo Mode never presents a connected wallet. The real wallet lives in the
+    // wallet provider; in Demo Mode it is explicitly not connected.
+    wallet: { status: 'idle', address: null, chainId: null, error: null, hint: null },
     advances: [],
     finances: [],
     pool: buildPool(DEMO_POOL_SEED_WEI as PoolSeed),
@@ -74,16 +83,15 @@ function demoState(): SessionState {
   }
 }
 
-const DEMO_WALLET_PLACEHOLDER = '0x00000000000000000000000000000000d3ad3e30' as `0x${string}`
-
 export type SessionAction =
   | { type: 'enter-demo' }
+  | { type: 'land' }
   | { type: 'enter-live' }
   | { type: 'set-view'; view: ViewId }
   | { type: 'select-friend'; key: string }
   | { type: 'set-friends'; friends: FriendPosition[] }
   | { type: 'set-live'; live: LiveDataState }
-  | { type: 'set-wallet'; wallet: WalletState }
+  | { type: 'set-live-error'; error: string }
   | { type: 'take-advance'; friendKey: string; faceValueWei: bigint; durationMs: bigint }
   | { type: 'open-scene'; id: string | null }
   | { type: 'take-finance'; friendKey: string; action: GrowthAction; contributionWei: bigint }
@@ -104,12 +112,16 @@ function withInsight(state: SessionState, advances: AdvancePosition[], finances:
 export function reducer(state: SessionState, action: SessionAction): SessionState {
   switch (action.type) {
     case 'enter-demo':
-      return { ...demoState(), view: 'dashboard' }
+      return { ...demoState(), landed: true, view: 'dashboard' }
+
+    case 'land':
+      return { ...state, landed: true, view: 'dashboard' }
 
     case 'enter-live':
       return {
         ...state,
         mode: 'live',
+        landed: true,
         simOffsetMs: 0n,
         friends: [],
         advances: [],
@@ -132,6 +144,9 @@ export function reducer(state: SessionState, action: SessionAction): SessionStat
     case 'set-friends': {
       // Prefer keeping the current selection; otherwise select the first Friend
       // that is actually earning, so the reward path is immediately visible.
+      const unchanged =
+        state.friends.length === action.friends.length &&
+        state.friends.every((f, i) => f.key === action.friends[i]!.key)
       const keepCurrent =
         state.selectedFriendKey !== null &&
         action.friends.some((f) => f.key === state.selectedFriendKey)
@@ -139,6 +154,7 @@ export function reducer(state: SessionState, action: SessionAction): SessionStat
         action.friends.find((f) => f.activated && (f.rewards.streamingRfWei ?? 0n) > 0n) ??
         action.friends.find((f) => f.activated) ??
         action.friends[0]
+      if (unchanged && keepCurrent) return state
       return {
         ...state,
         friends: action.friends,
@@ -147,10 +163,14 @@ export function reducer(state: SessionState, action: SessionAction): SessionStat
     }
 
     case 'set-live':
+      // Returning the SAME object when nothing changed keeps the sync effect in
+      // App from re-running itself forever.
+      if (state.live === action.live) return state
       return { ...state, live: action.live }
 
-    case 'set-wallet':
-      return { ...state, wallet: action.wallet }
+    case 'set-live-error':
+      if (state.live.status === 'error' && state.live.error === action.error) return state
+      return { ...state, live: { ...state.live, status: 'error', error: action.error } }
 
     case 'take-advance': {
       const friend = state.friends.find((f) => f.key === action.friendKey)

@@ -45,7 +45,7 @@ export function watch(page: Page) {
 export async function enterDemo(page: Page) {
   await page.goto('/')
   await page.getByTestId('try-demo').click()
-  await expect(page.getByTestId('device')).toBeVisible()
+  await expect(page.getByTestId('friend-hero')).toBeVisible()
 }
 
 export const MOBILE_WIDTHS = [360, 390, 430]

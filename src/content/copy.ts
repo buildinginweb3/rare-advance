@@ -6,6 +6,28 @@
  * "synergistic liquidity primitives", no generic corporate crypto copy.
  */
 
+export const HERO_HEADLINE = 'Your Friend is already earning. Get your streaming $RAREFRIENDS early.'
+
+/** Exactly three steps. The landing teaches the product, not the machinery. */
+export const HERO_STEPS = [
+  {
+    title: 'YOUR FRIEND EARNS',
+    body: 'Rare Friends pay out RF and WETH rewards to active Friends, based on reward weight.',
+  },
+  {
+    title: 'CHOOSE HOW MUCH TO ADVANCE',
+    body: 'Take part of the RF that is already streaming, early.',
+  },
+  {
+    title: 'GET RF NOW, THE STREAM SETTLES LATER',
+    body: 'The rest arrives as the rewards vest. You can pay it off early whenever you like.',
+  },
+] as const
+
+/** One small teaser for the second idea. No model, no table, no numbers. */
+export const HERO_TEASER =
+  'Finance activation, hardwiring, promotions and upgrades from the future rewards they create.'
+
 export const HERO_SUBHEAD = ['Your Friend is already earning.', "Don't wait to get paid."]
 
 export const HERO_SUPPORT =

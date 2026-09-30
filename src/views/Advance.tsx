@@ -1,217 +1,175 @@
-import { useMemo, useState } from 'react'
+/**
+ * ADVANCE — ONE DECISION AT A TIME
+ * =================================
+ *
+ * The primary holder flow, in this order and nothing else:
+ *
+ *   1. YOUR STREAM          — how much RF is still streaming
+ *   2. HOW MUCH DO YOU WANT EARLY  — 25 / 50 / 75 / MAX
+ *   3. CHOOSE A POOL        — every eligible pool, compared factually, no verdict
+ *   4. CONFIRM               — a short, comprehensible sheet
+ *   5. WATCH IT SETTLE      — or pay it off early
+ *
+ * Everything technical (principal, discount basis points, funding snapshots,
+ * pool utilisation) is behind VIEW DETAILS.
+ */
+
+import { useMemo, useState, type CSSProperties } from 'react'
 import { Badge, Lcd, Note, Notice, Panel, ProgressBar, RfChip, SectionTitle, Stat } from '../components/ui'
-import { SettlementScene, AdvanceTermsNote } from '../components/SettlementScene'
-import { Device } from '../components/Device'
-import { formatBpsAsPercent, formatDuration, formatRF, formatWeight, percentWhole, BPS_SCALE } from '../math/rf'
-import { ADVANCE_PRESETS, ADVANCE_MARKET_TERMS, SIMULATED_QUOTES_LABEL, SIMULATED_POOL_QUOTES, NO_PROMISE_COPY, SIM_TIME_STEP_MS } from '../economy/rareAdvanceConfig'
-import { quoteAdvance, quoteFromSimulatedPool, validateSelection, reconcileSettlement, remainingAt, isSettled, selectionToWei } from '../economy/advance'
-import { canFill, poolAvailable } from '../economy/pool'
+import { SettlementScene } from '../components/SettlementScene'
+import { formatBpsAsPercent, formatDuration, formatRF, mulBps, BPS_SCALE } from '../math/rf'
+import { ADVANCE_PRESETS, ADVANCE_MARKET_TERMS, SIM_TIME_STEP_MS } from '../economy/rareAdvanceConfig'
+import {
+  isPositionSettled,
+  positionOutstandingRfWei,
+  payoffQuoteWei,
+} from '../economy/pools/engine'
+import { streamOffers, type StreamOffer } from '../economy/pools/market'
 import { streamRemainingMs } from '../chain/reads'
-import { useDispatch, useSession, selectedFriend, sessionNowMs, advanceFor, type ViewId } from '../session/store'
-import { ADVANCE_HEADLINE, ADVANCE_SUB, NOT_A_LOAN } from '../content/copy'
-import type { AdvancePosition, DataProvenance } from '../types'
+import { useDispatch, useSession, selectedFriend, sessionNowMs } from '../session/store'
+import { LOCAL_LP_ID, useMarket, useMarketDispatch } from '../session/marketStore'
+import { ADVANCE_HEADLINE, NOT_A_LOAN } from '../content/copy'
+import { PROTOCOL_STREAM_DURATION_MS } from '../economy/pools/terms'
+import type { Position } from '../economy/pools/types'
 
 export function AdvanceView() {
   const state = useSession()
   const dispatch = useDispatch()
+  const market = useMarket()
+  const marketDispatch = useMarketDispatch()
   const nowMs = sessionNowMs(state)
   const friend = selectedFriend(state)
-  const latest = advanceFor(state, state.selectedFriendKey)
-  const advanceOpen = latest !== null && latest.stage !== 'settled'
 
   const [bps, setBps] = useState<bigint>(10_000n)
   const [custom, setCustom] = useState('')
-  /** An explicitly entered face value overrides the slider, so a user can
-   *  request an exact RF amount instead of a basis-point slice. */
   const [customFace, setCustomFace] = useState<bigint | null>(null)
+  const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState(false)
+  const [showDetails, setShowDetails] = useState(false)
+
+  const myPositions = useMemo(
+    () => market.pools.flatMap((p) => p.positions.filter((x) => x.borrowerLpId === LOCAL_LP_ID)),
+    [market.pools],
+  )
+  const openPosition = useMemo(() => myPositions.find((p) => !isPositionSettled(p)) ?? null, [myPositions])
+  const settledPosition = useMemo(() => myPositions.find((p) => isPositionSettled(p)) ?? null, [myPositions])
 
   const streamRemaining = streamRemainingMs(friend?.rewards.streamFinishUnix ?? null, nowMs)
   const eligible = friend?.rewards.streamingRfWei ?? null
   const eligibleWei = eligible === null ? 0n : eligible
 
-  const faceValue = useMemo(
-    () => (customFace !== null ? customFace : eligible === null ? 0n : selectionToWei(eligibleWei, bps)),
-    [customFace, eligible, eligibleWei, bps],
+  const faceValue = customFace ?? (eligible === null ? 0n : mulBps(eligibleWei, bps))
+
+  // Competing offers from every pool that can fund this.
+  const offers: StreamOffer[] = useMemo(
+    () =>
+      streamOffers(
+        market.pools,
+        {
+          friendKey: friend?.key ?? '',
+          eligibleStreamingWei: faceValue,
+          termMs: streamRemaining ?? PROTOCOL_STREAM_DURATION_MS,
+          borrowerLpId: LOCAL_LP_ID,
+        },
+      ),
+    [market.pools, friend?.key, faceValue, streamRemaining],
   )
 
-  const quote = useMemo(
-    () => quoteAdvance(faceValue, BPS_SCALE, streamRemaining ?? 0n),
-    [faceValue, streamRemaining],
-  )
-
-  const validation = validateSelection(faceValue, eligibleWei)
-  const fillable = canFill(state.pool, quote.youReceiveNowWei)
-  const simulatedQuotes = useMemo(() => {
-    if (eligibleWei <= 0n) return []
-    return SIMULATED_POOL_QUOTES.map((q) => ({
-      def: q,
-      quote: quoteFromSimulatedPool(eligibleWei, streamRemaining ?? 0n, q.key),
-    })).filter((x) => x.quote !== null)
-  }, [eligibleWei, streamRemaining])
-
+  const offer = offers.find((o) => o.poolId === selectedPoolId) ?? offers[0] ?? null
   const noStream = eligible === null || eligibleWei === 0n
 
   return (
     <div className="stack">
       <Panel dark>
-        <div className="grid-hero">
-          <div className="stack">
-            <h1 className="h2" style={{ fontSize: 'clamp(14px, 4vw, 22px)' }}>
-              {ADVANCE_HEADLINE}
-            </h1>
-            <p className="h3" style={{ fontSize: 9, color: 'var(--paper)' }}>
-              {ADVANCE_SUB}
-            </p>
-            <ul className="tiny" style={{ margin: 0, paddingLeft: 16, color: 'var(--gray-2)', lineHeight: 1.8 }}>
-              {NOT_A_LOAN.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          </div>
-          <Device
-            friend={friend}
-            view={state.view}
-            mode={state.mode}
-            live={state.live}
-            advance={latest}
-            onNavigate={(v: ViewId) => dispatch({ type: 'set-view', view: v })}
-          />
-        </div>
+        <h1 className="h2" style={{ fontSize: 'clamp(14px, 4vw, 22px)' }}>
+          {ADVANCE_HEADLINE}
+        </h1>
+        <p className="tiny" style={{ color: 'var(--gray-2)', maxWidth: 440, marginTop: 6 }}>
+          Get part of the RF your Friend has already earned, before the stream finishes paying it out.
+        </p>
       </Panel>
 
       {!friend ? (
-        <Notice tone="info">Select a Friend on the dashboard first.</Notice>
+        <Notice tone="info">Select a Friend on HOME first.</Notice>
       ) : null}
 
       {friend && noStream ? (
-        <Panel title={`${friend.collection} #${friend.tokenId}`}>
-          <Notice tone="warn">
-            {eligible === null
-              ? 'Reward stream unavailable. The per-Friend forward stream could not be derived from current protocol state.'
-              : friend.activated
-                ? 'This Friend currently has no streaming RF attributable to it. Reward streams are funded by protocol activity and can be empty between streams.'
-                : 'This Friend is not active, so it has no reward weight and no stream. Activate or reactivate it in GROW to create weight.'}
-          </Notice>
-          <div style={{ marginTop: 8 }}>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => dispatch({ type: 'set-view', view: 'grow' })}
-            >
-              GO TO GROW
-            </button>
+        <Panel title={`${friend.collection} #${friend.tokenId}`} testId="advance-empty">
+          <div className="empty-state">
+            <span className="h3">NO RF AVAILABLE TO ADVANCE YET</span>
+            <p className="tiny">
+              This Friend does not currently have an eligible RF stream.
+              {friend.activated
+                ? ' Reward streams are funded by protocol activity and can be empty between streams.'
+                : ' It is not active, so it has no reward weight and no stream.'}
+            </p>
+            <div className="row" style={{ justifyContent: 'center' }}>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => dispatch({ type: 'set-view', view: 'dashboard' })}
+                data-testid="choose-other-friend"
+              >
+                CHOOSE ANOTHER FRIEND
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => dispatch({ type: 'set-view', view: 'grow' })}
+                data-testid="explore-grow"
+              >
+                EXPLORE GROW
+              </button>
+            </div>
           </div>
         </Panel>
       ) : null}
 
-      {/* ------------- active / settled advance ------------- */}
-      {latest ? <ActiveAdvanceCard position={latest} /> : null}
-
-      {/* ------------- quote ------------- */}
-      {friend && !noStream && !advanceOpen ? (
-        <Panel
-          title={`${friend.collection} #${friend.tokenId}`}
-          right={
-            <Badge
-              provenance={friend.stateSource}
-              label={friend.stateSource === 'onchain' ? 'STATE · LIVE ONCHAIN' : 'STATE · SIMULATED'}
-            />
-          }
-        >
-          <div className="grid-2">
+      {friend && !noStream && !openPosition ? (
+        <>
+          {/* ---- 1. your stream ---- */}
+          <Panel title="YOUR STREAM" right={<Badge provenance={friend.rewards.streamingRf} />}>
             <Lcd
-              label="REWARD WEIGHT"
-              right={<Badge provenance={friend.weight} />}
-              value={formatWeight(friend.weightMicros, 2)}
-              small
-            />
-            <Lcd
-              label="STREAM REMAINING"
-              right={<Badge provenance={friend.rewards.streamingRf} />}
-              value={formatDuration(streamRemaining ?? 0n)}
-              small
-            />
-          </div>
-
-          <div className="panel-recess" style={{ marginTop: 10 }}>
-            <Stat
-              label="Claimable RF"
-              provenance={friend.rewards.claimableRf}
-              value={
-                friend.rewards.claimableRfWei === null
-                  ? 'NO REWARD POSITION'
-                  : `${formatRF(friend.rewards.claimableRfWei, 3)} RF`
+              label="STILL STREAMING"
+              value={`${formatRF(eligibleWei, 2)} RF`}
+              sub={
+                <>
+                  Over{' '}
+                  {streamRemaining === null ? '7 days' : formatDuration(streamRemaining)} ·{' '}
+                  {friend.collection} #{friend.tokenId}
+                </>
               }
             />
-            <Stat
-              label="Streaming RF (eligible)"
-              provenance={friend.rewards.streamingRf}
-              value={`${formatRF(eligibleWei, 2)} RF`}
-            />
-            <Stat
-              label="Stream remaining"
-              value={formatDuration(streamRemaining ?? 0n)}
-            />
-          </div>
+          </Panel>
 
-          <div style={{ marginTop: 12 }}>
-            <div className="lcd-label">
-              <span>SELECT A SLICE OF THE STREAM</span>
-              {customFace !== null ? <Badge provenance="simulated" label="CUSTOM AMOUNT" /> : undefined}
-              <Badge provenance="simulated" label={ADVANCE_MARKET_TERMS.label} />
-            </div>
-            <label className="sr-only" htmlFor="advance-bps">
-              Percentage of the streaming reward to advance
-            </label>
-            <input
-              id="advance-bps"
-              className="slider"
-              type="range"
-              min={0}
-              max={100}
-              step={1}
-              value={Number(bps / 100n)}
-              onChange={(e) => {
-                setCustom('')
-                setCustomFace(null)
-                setBps(BigInt(e.target.value) * 100n)
-              }}
-              aria-valuetext={`${Number(bps / 100n)} percent of the streaming reward`}
-            />
+          {/* ---- 2. how much early ---- */}
+          <Panel title="HOW MUCH DO YOU WANT EARLY?" right={<Badge provenance="simulated" label="SIMULATED" />}>
             <div className="btn-group" role="group" aria-label="Advance presets">
               {ADVANCE_PRESETS.map((p) => (
                 <button
                   key={p.key}
                   type="button"
-                  className="btn btn-outline btn-sm btn-toggle"
-                  aria-pressed={bps === p.bps}
+                  className="btn btn-outline btn-toggle"
+                  aria-pressed={customFace === null && bps === p.bps}
                   onClick={() => {
                     setBps(p.bps)
                     setCustom('')
                     setCustomFace(null)
+                    setSelectedPoolId(null)
                   }}
-                  data-testid={`preset-${p.label.replace('%', '').toLowerCase()}`}
+                  data-testid={`preset-${p.label.replace('%', '')}`}
                 >
                   {p.label}
                 </button>
               ))}
             </div>
-
             <div className="row" style={{ marginTop: 8 }}>
               <label className="tiny" htmlFor="advance-custom">
-                CUSTOM RF
+                OR A SPECIFIC AMOUNT
               </label>
               <input
                 id="advance-custom"
-                className="mono-num"
-                style={{
-                  font: 'inherit',
-                  padding: '8px',
-                  width: 140,
-                  border: '2px solid var(--ink)',
-                  background: 'var(--paper)',
-                  minHeight: 36,
-                }}
+                style={inputStyle}
                 inputMode="decimal"
                 placeholder="e.g. 250"
                 value={custom}
@@ -222,316 +180,474 @@ export function AdvanceView() {
                 type="button"
                 className="btn btn-outline btn-sm"
                 onClick={() => {
-                  try {
-                    const v = parseCustom(custom)
-                    if (v <= 0n) return
-                    setCustomFace(v)
-                    if (eligibleWei > 0n) setBps((v * BPS_SCALE) / eligibleWei)
-                  } catch {
-                    /* leave selection unchanged on invalid input */
-                  }
+                  const v = parseRf(custom)
+                  if (v === null || v <= 0n) return
+                  setCustomFace(v)
+                  setSelectedPoolId(null)
                 }}
                 data-testid="advance-custom-apply"
               >
-                APPLY
+                USE
               </button>
             </div>
-          </div>
-
-          <div className="lcd" style={{ marginTop: 12 }} data-testid="advance-quote">
-            <div className="lcd-label">
-              <span>QUOTE</span>
-              <Badge provenance="simulated" label="SIMULATED" />
-            </div>
-            <div className="grid-3">
-              <Lcd label="STREAM SELECTED" value={`${formatRF(quote.faceValueWei, 2)} RF`} small />
-              <Lcd
-                label="YOU RECEIVE NOW"
-                value={`${formatRF(quote.youReceiveNowWei, 2)} RF`}
-                small
-                valueTestId="quote-receive"
-              />
-              <Lcd
-                label="SETTLEMENT"
-                value={`${formatRF(quote.settlementWei, 2)} RF`}
-                small
-                valueTestId="quote-settlement"
-              />
-            </div>
-            <div className="panel-recess" style={{ marginTop: 8 }}>
-              <Stat
-                label="Liquidity provider earns"
-                provenance="simulated"
-                value={`${formatRF(quote.lpSpreadWei, 2)} RF`}
-                hint={`· ${formatBpsAsPercent(quote.lpSpreadBps)}`}
-                valueTestId="quote-lp"
-              />
-              <Stat
-                label="Rare Advance RF burn"
-                provenance="simulated"
-                value={`${formatRF(quote.rareAdvanceBurnWei, 2)} RF`}
-                hint={`· ${formatBpsAsPercent(quote.rareAdvanceBurnBps)}`}
-                valueTestId="quote-burn"
-              />
-              <Stat label="Discount" value={formatBpsAsPercent(quote.discountBps)} />
-              <Stat label="Time remaining" value={formatDuration(quote.durationMs)} valueTestId="quote-duration" />
-            </div>
-            <div style={{ marginTop: 8 }}>
-              <AdvanceTermsNote />
-            </div>
-          </div>
-
-          {validation ? (
-            <div style={{ marginTop: 8 }}>
-              <Notice tone="warn">{validation.message}</Notice>
-            </div>
-          ) : null}
-          {!fillable && !validation ? (
-            <div style={{ marginTop: 8 }}>
+            {customFace !== null && customFace > eligibleWei ? (
               <Notice tone="warn">
-                The simulated pool has {formatRF(poolAvailable(state.pool), 0)} RF available, which is less than
-                this quote requires. Reduce the selection.
+                That is more than this Friend is currently streaming. Capped at {formatRF(eligibleWei, 2)} RF.
               </Notice>
-            </div>
+            ) : null}
+          </Panel>
+
+          {/* ---- 3. choose a pool ---- */}
+          <Panel
+            title="CHOOSE A POOL"
+            right={<span className="tiny muted">{offers.length} AVAILABLE</span>}
+          >
+            {offers.length === 0 ? (
+              <Notice tone="warn">
+                No pool can fund that amount right now. Try a smaller amount, or add liquidity in LIQUIDITY.
+              </Notice>
+            ) : (
+              <>
+                <div className="stack" data-testid="offers">
+                  {offers.slice(0, 3).map((o) => (
+                    <OfferCard
+                      key={o.poolId}
+                      offer={o}
+                      selected={offer?.poolId === o.poolId}
+                      onSelect={() => setSelectedPoolId(o.poolId)}
+                    />
+                  ))}
+                </div>
+                {offers.length > 3 ? (
+                  <p className="tiny muted">
+                    + {offers.length - 3} more pools available.{' '}
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowDetails(true)}>
+                      VIEW DETAILS
+                    </button>
+                  </p>
+                ) : null}
+              </>
+            )}
+          </Panel>
+
+          {/* ---- 4. confirm ---- */}
+          {offer ? (
+            confirming ? (
+              <Panel title="GET RF EARLY" testId="advance-confirm">
+                <div className="confirm-sheet">
+                  <div className="row" style={{ justifyContent: 'space-between' }}>
+                    <span className="tiny">You receive now</span>
+                    <span className="confirm-figure">{formatRF(offer.youGetNowWei, 2)} RF</span>
+                  </div>
+                  <div className="row" style={{ justifyContent: 'space-between' }}>
+                    <span className="tiny">Your stream settling later</span>
+                    <span className="confirm-figure">{formatRF(offer.settlementWei, 2)} RF</span>
+                  </div>
+                  <div className="row" style={{ justifyContent: 'space-between' }}>
+                    <span className="tiny">Total cost</span>
+                    <span className="confirm-figure">{formatRF(offer.maxCostWei, 2)} RF</span>
+                  </div>
+                </div>
+                <Note>
+                  No NFT moves. No real RF moves in this demo. You can pay this off early at any time.
+                </Note>
+                <div className="row" style={{ marginTop: 10 }}>
+                  <button
+                    type="button"
+                    className="btn btn-block"
+                    onClick={() => {
+                      marketDispatch({
+                        type: 'open-stream',
+                        poolId: offer.poolId,
+                        positionId: `sp-${Date.now().toString(36)}`,
+                        friendKey: friend.key,
+                        faceValueWei: offer.settlementWei,
+                        termMs: offer.termMs,
+                      })
+                      setConfirming(false)
+                      setShowDetails(false)
+                    }}
+                    data-testid="confirm-advance"
+                  >
+                    CONFIRM SIMULATED ADVANCE
+                  </button>
+                  <button type="button" className="btn btn-outline" onClick={() => setConfirming(false)} data-testid="cancel-advance">
+                    CANCEL
+                  </button>
+                </div>
+              </Panel>
+            ) : (
+              <div className="cta-bar">
+                <div>
+                  <div className="tiny muted">YOU GET NOW</div>
+                  <div className="cta-figure">{formatRF(offer.youGetNowWei, 2)} RF</div>
+                  <div className="tiny muted">
+                    {offer.poolName} · cost {formatRF(offer.maxCostWei, 2)} RF
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn cta-bar-btn"
+                  onClick={() => setConfirming(true)}
+                  data-testid="take-advance"
+                >
+                  GET {formatRF(offer.youGetNowWei, 0)} RF NOW
+                </button>
+              </div>
+            )
           ) : null}
 
-          <div style={{ marginTop: 10 }}>
-            <button
-              type="button"
-              className="btn btn-block"
-              disabled={Boolean(validation) || !fillable}
-              onClick={() => {
-                dispatch({
-                  type: 'take-advance',
-                  friendKey: friend.key,
-                  faceValueWei: quote.faceValueWei,
-                  durationMs: quote.durationMs,
-                })
-                setBps(10_000n)
-                setCustom('')
-                setCustomFace(null)
-              }}
-              data-testid="take-advance"
-            >
-              TAKE SIMULATED ADVANCE
+          {/* ---- details, on demand only ---- */}
+          {showDetails && offer ? (
+            <Panel title="DETAILS" testId="advance-details" right={<Badge provenance="simulated" />}>
+              <div className="grid-2">
+                <div className="panel-recess">
+                  <Stat label="Stream value" value={`${formatRF(offer.settlementWei, 4)} RF`} />
+                  <Stat label="You receive now" value={`${formatRF(offer.youGetNowWei, 4)} RF`} />
+                  <Stat label="Pool principal" value={`${formatRF(offer.youGetNowWei, 4)} RF`} />
+                  <Stat label="Settlement value" value={`${formatRF(offer.settlementWei, 4)} RF`} />
+                </div>
+                <div className="panel-recess">
+                  <Stat label="LP premium" provenance="simulated" value={`${formatRF(offer.lpPremiumWei, 4)} RF · ${formatBpsAsPercent(offer.lpPremiumBps)}`} />
+                  <Stat label="Rare Advance fee" provenance="simulated" value={`${formatRF(offer.rareAdvanceFeeWei, 4)} RF · ${formatBpsAsPercent(offer.rareAdvanceFeeBps)}`} />
+                  <Stat label="Total cost" value={`${formatRF(offer.maxCostWei, 4)} RF`} />
+                  <Stat label="Time left" value={formatDuration(offer.termMs)} />
+                  <Stat label="Pool available" provenance="simulated" value={`${formatRF(offer.availableWei, 0)} RF`} />
+                </div>
+              </div>
+              <Note>
+                {ADVANCE_MARKET_TERMS.label}: the holder receives 95% of the stream, the pool takes its premium,
+                and 1% is modelled as a Rare Advance burn. Pools set their own premium, so it varies by pool.
+              </Note>
+            </Panel>
+          ) : (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowDetails(true)} data-testid="show-advance-details">
+              VIEW DETAILS
             </button>
-          </div>
+          )}
+        </>
+      ) : null}
 
-          {simulatedQuotes.length > 0 ? (
-            <div style={{ marginTop: 12 }}>
-              <div className="lcd-label">
-                <span>{SIMULATED_QUOTES_LABEL}</span>
-                <Badge provenance="simulated" />
-              </div>
-              <div className="table-scroll">
-                <table className="tbl">
-                  <caption className="sr-only">Simulated pool quotes</caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">Pool</th>
-                      <th scope="col" className="num">
-                        Receive now
-                      </th>
-                      <th scope="col" className="num">
-                        Settlement
-                      </th>
-                      <th scope="col" className="num">
-                        Discount
-                      </th>
-                      <th scope="col" className="num">
-                        Time
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {simulatedQuotes.map(({ def, quote: q }) => (
-                      <tr key={def.key}>
-                        <th scope="row">{def.label}</th>
-                        <td className="num">{formatRF(q!.youReceiveNowWei, 2)} RF</td>
-                        <td className="num">{formatRF(q!.settlementWei, 2)} RF</td>
-                        <td className="num">{formatBpsAsPercent(def.discountBps)}</td>
-                        <td className="num">{formatDuration(q!.durationMs)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : null}
+      {/* ---- an advance is already open ---- */}
+      {openPosition ? <OpenPositionCard position={openPosition} onSimulate={() => marketDispatch({ type: 'advance-time', deltaMs: BigInt(SIM_TIME_STEP_MS) })} /> : null}
+
+      {/* ---- recently settled ---- */}
+      {settledPosition && !openPosition ? (
+        <Panel title="SETTLED ✓" testId="advance-settled-banner">
+          <p className="tiny" style={{ marginTop: 0 }}>
+            Your last advance has been fully settled.
+          </p>
+          <div className="panel-recess">
+            <Stat label="Settled from" value={settledPosition.kind === 'stream' ? 'your reward stream' : 'modeled rewards'} />
+            <Stat label="Total cost" value={`${formatRF(settledPosition.maxLpPremiumWei, 2)} RF`} />
+          </div>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => dispatch({ type: 'set-view', view: 'dashboard' })}
+            data-testid="back-to-friend"
+          >
+            BACK TO MY FRIEND
+          </button>
         </Panel>
       ) : null}
 
-      {/* ------------- history ------------- */}
-      {state.advances.length > 0 ? (
-        <section aria-labelledby="advance-history">
-          <SectionTitle>
-            <span id="advance-history">SESSION ADVANCES</span>
-          </SectionTitle>
-          <div className="stack">
-            {state.advances.map((a) => (
-              <div className="panel" key={a.id} data-testid={`advance-${a.id}`}>
-                <div className="row" style={{ justifyContent: 'space-between' }}>
-                  <span className="h3">{a.friendKey}</span>
-                  <Badge
-                    provenance="simulated"
-                    label={a.stage === 'settled' ? 'SETTLED ✓ · SIMULATED' : 'ACTIVE · SIMULATED'}
-                    large
-                  />
-                </div>
-                <div className="panel-recess" style={{ marginTop: 6 }}>
-                  <Stat label="Received today" provenance="simulated" value={`${formatRF(a.quote.youReceiveNowWei, 2)} RF`} />
-                  <Stat
-                    label="Remaining settlement"
-                    provenance="simulated"
-                    value={`${formatRF(remainingAt(a.quote, a.elapsedMs), 2)} RF`}
-                  />
-                  <Stat
-                    label="Settled"
-                    provenance="simulated"
-                    value={`${formatRF(a.settledWei, 2)} / ${formatRF(a.quote.settlementWei, 2)} RF`}
-                  />
-                  <Stat
-                    label="Time remaining"
-                    value={isSettled(a.quote, a.elapsedMs) ? '0m' : formatDuration(a.quote.durationMs - a.elapsedMs)}
-                  />
-                </div>
-                <div style={{ marginTop: 6 }}>
-                  <ProgressBar
-                    pct={percentWhole(a.settledWei, a.quote.settlementWei)}
-                    label="Advance settlement progress"
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
       <Panel title="WHAT THIS IS NOT">
-        <ul className="tiny" style={{ margin: 0, paddingLeft: 16, lineHeight: 1.9 }}>
-          <li>No NFT floor oracle. No NFT liquidation. No LTV. No margin call.</li>
-          <li>No credit score and no monthly repayments.</li>
-          <li>Not a lending dashboard: the financed asset is a streaming RF receivable, not a token price.</li>
+        <ul className="tiny" style={{ margin: 0, paddingLeft: 16, lineHeight: 1.85 }}>
+          {NOT_A_LOAN.map((l) => (
+            <li key={l}>{l}</li>
+          ))}
+          <li>Reward weight is allocation weight, not tokens, yield, return or ROI.</li>
         </ul>
-        <div style={{ marginTop: 8 }}>
-          <Note>{NO_PROMISE_COPY.weightNotYield}</Note>
-        </div>
       </Panel>
     </div>
   )
 }
 
-function parseCustom(raw: string): bigint {
+// ---------------------------------------------------------------------------
+// Offer card
+// ---------------------------------------------------------------------------
+
+function OfferCard({
+  offer,
+  selected,
+  onSelect,
+}: {
+  offer: StreamOffer
+  selected: boolean
+  onSelect: () => void
+}) {
+  return (
+    <button
+      type="button"
+      className="fcard offer-card"
+      aria-pressed={selected}
+      onClick={onSelect}
+      data-testid={`offer-${offer.poolId}`}
+    >
+      <span className="fcard-body">
+        <span className="row-tight" style={{ marginBottom: 4 }}>
+          {offer.privatePool ? <Badge provenance="simulated" label="PRIVATE" /> : null}
+          <Badge provenance="simulated" label={`LP PREMIUM ${formatBpsAsPercent(offer.lpPremiumBps)}`} />
+        </span>
+        <span className="fcard-name">{offer.poolName}</span>
+        <span className="offer-grid">
+          <span>
+            <span className="tiny muted">YOU GET NOW</span>
+            <span className="offer-figure">{formatRF(offer.youGetNowWei, 2)} RF</span>
+          </span>
+          <span>
+            <span className="tiny muted">TOTAL COST</span>
+            <span className="offer-figure">{formatRF(offer.maxCostWei, 2)} RF</span>
+          </span>
+          <span>
+            <span className="tiny muted">SETTLEMENT</span>
+            <span className="offer-figure">{formatRF(offer.settlementWei, 2)} RF</span>
+          </span>
+          <span>
+            <span className="tiny muted">TIME LEFT</span>
+            <span className="offer-figure">{formatDuration(offer.termMs)}</span>
+          </span>
+        </span>
+      </span>
+    </button>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Open position + manual payoff
+// ---------------------------------------------------------------------------
+
+function OpenPositionCard({ position, onSimulate }: { position: Position; onSimulate: () => void }) {
+  const market = useMarket()
+  const marketDispatch = useMarketDispatch()
+  const [showDetails, setShowDetails] = useState(false)
+  const [payMode, setPayMode] = useState<bigint | null>(null)
+  const [customPay, setCustomPay] = useState('')
+  const [scene, setScene] = useState(false)
+
+  const outstandingRf = positionOutstandingRfWei(position)
+  const payoffQuote = payoffQuoteWei(position)
+  const elapsedPct =
+    position.kind === 'stream' && position.termMs > 0n
+      ? Number((position.elapsedMs * 10_000n) / position.termMs)
+      : 0
+  const settledPct =
+    position.principalWei > 0n
+      ? Number(((position.principalWei + position.premiumPaidWei - outstandingRf) * 10_000n) / (position.principalWei + position.maxLpPremiumWei || 1n))
+      : 0
+
+  const pool = market.pools.find((p) => p.id === position.poolId)
+  const funders = position.funding
+    .map((f) => `${pool?.lps[f.lpId]?.displayName ?? f.lpId} ${Number(f.shareBps) / 100}%`)
+    .join(' · ')
+
+  const payAmount = (() => {
+    if (payMode === null) return null
+    if (payMode === BPS_SCALE) return payoffQuote
+    return mulBps(outstandingRf, payMode)
+  })()
+
+  return (
+    <Panel
+      title="ADVANCE ACTIVE"
+      testId="advance-active"
+      right={<Badge provenance="simulated" label="SIMULATED" large />}
+    >
+      {scene ? (
+        <SettlementScene
+          advance={{
+            id: position.id,
+            friendKey: position.friendKey,
+            quote: {
+              faceValueWei: position.kind === 'stream' ? position.faceValueWei : position.principalWei + position.maxLpPremiumWei,
+              youReceiveNowWei: position.principalWei,
+              settlementWei: position.principalWei + position.maxLpPremiumWei,
+              lpSpreadWei: position.maxLpPremiumWei,
+              rareAdvanceBurnWei: position.kind === 'stream' ? position.rareAdvanceFeeWei : 0n,
+              discountBps: position.maxLpPremiumWei > 0n ? 0n : 0n,
+              lpSpreadBps: 0n,
+              rareAdvanceBurnBps: 0n,
+              durationMs: position.kind === 'stream' ? position.termMs : 0n,
+              quoteKind: 'standard',
+            },
+            createdAtMs: position.createdAtMs,
+            elapsedMs: position.elapsedMs,
+            settledWei: position.principalRepaidWei,
+            lpEarnedWei: 0n,
+            burnWei: 0n,
+            stage: 'active',
+            simulated: true,
+          }}
+          friend={null}
+          onDone={() => setScene(false)}
+        />
+      ) : null}
+
+      <div className="grid-2">
+        <Lcd label="YOU RECEIVED" value={`${formatRF(position.principalWei, 2)} RF`} sub={<>{<RfChip />} settled from the pool that funded you</>} />
+        <Lcd
+          label="STILL TO SETTLE"
+          value={`${formatRF(outstandingRf, 2)} RF`}
+          sub={<>TIME LEFT {position.kind === 'stream' && position.termMs > position.elapsedMs ? formatDuration(position.termMs - position.elapsedMs) : 'until you pay it off'}</>}
+        />
+      </div>
+
+      <div style={{ marginTop: 8 }}>
+        <ProgressBar pct={settledPct} label="Advance settlement progress" />
+        <div className="row" style={{ justifyContent: 'space-between', marginTop: 4 }}>
+          <span className="tiny mono-num" data-testid="advance-progress">
+            {formatRF(position.principalRepaidWei, 2)} / {formatRF(position.principalWei, 2)} RF principal
+          </span>
+          <span className="tiny mono-num">{Number(elapsedPct) / 100}% of the term</span>
+        </div>
+      </div>
+
+      <div className="row" style={{ marginTop: 10 }}>
+        <button type="button" className="btn" onClick={onSimulate} data-testid="simulate-time">
+          SIMULATE TIME
+        </button>
+        <button type="button" className="btn btn-outline" onClick={() => setScene(true)} data-testid="show-settlement-scene">
+          SHOW SETTLEMENT
+        </button>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowDetails((v) => !v)} data-testid="toggle-advance-details">
+          VIEW DETAILS
+        </button>
+      </div>
+
+      {/* manual payoff */}
+      <SectionTitle>
+        <span className="h3">PAY OFF EARLY</span>
+      </SectionTitle>
+      <p className="tiny muted" style={{ marginTop: 0 }}>
+        Pay the RF you owe and get your reward stream back. You only pay the premium earned so far — the rest
+        is never charged.
+      </p>
+      <div className="tiny mono-num" data-testid="advance-payoff-quote" style={{ margin: '6px 0 2px' }}>
+        Full payoff today: {formatRF(payoffQuote, 2)} RF
+      </div>
+      <div className="btn-group" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }} role="group" aria-label="Repayment amount">
+        {(
+          [
+            [2_500n, '25%'],
+            [5_000n, '50%'],
+            [BPS_SCALE, 'PAY OFF'],
+          ] as [bigint, string][]
+        ).map(([v, label]) => (
+          <button
+            key={label}
+            type="button"
+            className="btn btn-outline btn-sm btn-toggle"
+            aria-pressed={payMode === v}
+            onClick={() => setPayMode(v)}
+            data-testid={`repay-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`}
+          >
+            {label}
+          </button>
+        ))}
+        <button
+          type="button"
+          className="btn btn-outline btn-sm btn-toggle"
+          aria-pressed={payMode === -1n}
+          onClick={() => setPayMode(-1n)}
+          data-testid="repay-custom"
+        >
+          CUSTOM
+        </button>
+      </div>
+
+      {payMode === -1n ? (
+        <div className="row" style={{ marginTop: 6 }}>
+          <label className="tiny" htmlFor="repay-custom-input">
+            CUSTOM RF
+          </label>
+          <input
+            id="repay-custom-input"
+            style={inputStyle}
+            inputMode="decimal"
+            value={customPay}
+            onChange={(e) => setCustomPay(e.target.value)}
+            data-testid="repay-custom-input"
+          />
+        </div>
+      ) : null}
+
+      {payMode !== null ? (
+        <div className="row" style={{ marginTop: 8 }}>
+          <span className="tiny">
+            {payMode === -1n
+              ? `Repay ${customPay || '0'} RF`
+              : payMode === BPS_SCALE
+                ? `Full payoff: ${formatRF(payoffQuote, 2)} RF`
+                : `Repay ${formatRF(payAmount ?? 0n, 2)} RF`}
+          </span>
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={
+              payMode === -1n
+                ? (parseRf(customPay) ?? 0n) <= 0n
+                : payAmount === null || payAmount <= 0n
+            }
+            onClick={() => {
+              const amount = payMode === -1n ? (parseRf(customPay) ?? 0n) : (payAmount ?? 0n)
+              if (amount <= 0n) return
+              marketDispatch({ type: 'repay', positionId: position.id, amountWei: amount })
+              setPayMode(null)
+              setCustomPay('')
+            }}
+            data-testid="repay-submit"
+          >
+            SIMULATED REPAYMENT
+          </button>
+        </div>
+      ) : null}
+
+      {showDetails ? (
+        <div className="panel-recess" style={{ marginTop: 10 }} data-testid="advance-open-details">
+          <Stat label="Pool" provenance="simulated" value={pool?.name ?? '—'} />
+          <Stat label="Funded by" provenance="simulated" value={funders} />
+          <Stat label="Principal" value={`${formatRF(position.principalWei, 4)} RF`} />
+          <Stat label="Premium paid so far" value={`${formatRF(position.premiumPaidWei, 4)} RF`} />
+          <Stat label="Maximum LP premium" value={`${formatRF(position.maxLpPremiumWei, 4)} RF`} />
+          <Stat
+            label="Premium that stops accruing if you pay off now"
+            value={`${formatRF(position.maxLpPremiumWei - position.premiumPaidWei, 4)} RF`}
+          />
+          {position.kind === 'growth' ? (
+            <>
+              <Stat label="RF repaid" value={`${formatRF(position.principalRepaidWei, 4)} / ${formatRF(position.repaymentTargetWei, 4)} RF`} />
+              <Stat label="RF reward routing" value={formatBpsAsPercent(position.rfRoutingBps)} />
+              <Stat label="WETH share while financing is active" value={formatBpsAsPercent(position.wethShareBps)} />
+              <Stat label="WETH routed to the pool" value={`${formatRF(position.wethPoolWei, 6)} WETH`} />
+              <Stat label="Protocol RF burn (underlying action)" provenance="protocol" value={`${formatRF(position.protocolBurnWei, 2)} RF`} />
+              <Stat label="Protocol RF reward funding (underlying action)" provenance="protocol" value={`${formatRF(position.protocolRewardFundingWei, 2)} RF`} />
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      <Note>
+        Financing can always be cleared. Once it is, every modeled RF and WETH reward route returns to the
+        Friend.
+      </Note>
+    </Panel>
+  )
+}
+
+function parseRf(raw: string): bigint | null {
   const m = /^(\d*)(\.\d*)?$/.exec(raw.trim())
-  if (!m || (!m[1] && !m[2])) throw new Error('invalid')
+  if (!m || (!m[1] && !m[2])) return null
   const int = m[1] || '0'
   const frac = (m[2] ?? '').replace('.', '').padEnd(18, '0').slice(0, 18)
   return BigInt(int) * 10n ** 18n + BigInt(frac || '0')
 }
 
-function ActiveAdvanceCard({ position: active }: { position: AdvancePosition }) {
-  const state = useSession()
-  const dispatch = useDispatch()
-  const friend = state.friends.find((f) => f.key === state.selectedFriendKey) ?? null
-  const sceneId = state.settlementSceneFor
-  const { principalWei, lpSpreadWei, burnWei } = reconcileSettlement(active.quote)
-  const progressPct =
-    active.quote.settlementWei > 0n
-      ? Number((active.settledWei * 10_000n) / active.quote.settlementWei) / 100
-      : 0
-
-  const settled = isSettled(active.quote, active.elapsedMs)
-  return (
-    <Panel
-      title={settled ? 'ADVANCE SETTLED' : 'ADVANCE ACTIVE'}
-      right={
-        <Badge
-          provenance="simulated"
-          label={settled ? 'SETTLED ✓ · SIMULATED' : 'ACTIVE · SIMULATED'}
-          large
-        />
-      }
-      testId="advance-card"
-    >
-      {sceneId === active.id ? (
-        <SettlementScene
-          advance={active}
-          friend={friend}
-          onDone={() => dispatch({ type: 'open-scene', id: null })}
-        />
-      ) : null}
-
-      <div className="grid-2" style={{ marginTop: sceneId === active.id ? 10 : 0 }}>
-        <Lcd
-          label="RECEIVED TODAY"
-          right={<Badge provenance="simulated" />}
-          value={`${formatRF(active.quote.youReceiveNowWei, 2)} RF`}
-        />
-        <Lcd
-          label="REMAINING SETTLEMENT"
-          right={<Badge provenance="simulated" />}
-          value={`${formatRF(remainingAt(active.quote, active.elapsedMs), 2)} RF`}
-          sub={
-            <>
-              <RfChip /> {active.quote.settlementWei > 0n ? formatRF(active.quote.settlementWei, 0) : '0'} RF stream
-            </>
-          }
-        />
-      </div>
-
-      <div style={{ marginTop: 8 }}>
-        <ProgressBar
-          pct={percentWhole(active.settledWei, active.quote.settlementWei)}
-          label="Advance settlement progress"
-        />
-        <div className="row" style={{ justifyContent: 'space-between', marginTop: 4 }}>
-          <span className="tiny mono-num" data-testid="advance-settled">
-            SETTLED {formatRF(active.settledWei, 2)} / {formatRF(active.quote.settlementWei, 2)} RF
-          </span>
-          <span className="tiny mono-num" data-testid="advance-time-remaining">
-            TIME REMAINING {isSettled(active.quote, active.elapsedMs) ? '0m' : formatDuration(active.quote.durationMs - active.elapsedMs)}
-          </span>
-        </div>
-      </div>
-
-      <div className="panel-recess" style={{ marginTop: 8 }}>
-        <Stat label="LP spread on settlement" provenance="simulated" value={`${formatRF(lpSpreadWei, 2)} RF`} />
-        <Stat label="RF burn on settlement" provenance="simulated" value={`${formatRF(burnWei, 2)} RF`} />
-        <Stat label="Principal returned to pool" provenance="simulated" value={`${formatRF(principalWei, 2)} RF`} />
-      </div>
-
-      <div className="row" style={{ marginTop: 10 }}>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => dispatch({ type: 'simulate-time' })}
-          data-testid="simulate-time"
-        >
-          SIMULATE TIME (+{SIM_TIME_STEP_MS / 3_600_000}H)
-        </button>
-        <span className="tiny muted" style={{ flex: '1 1 160px' }}>
-          Simulated clock only. {state.mode === 'demo' ? 'Demo time is deterministic.' : 'No real elapsed time is used in live mode.'}
-        </span>
-      </div>
-
-      {settled ? (
-        <div style={{ marginTop: 10 }} data-testid="advance-settled-banner">
-          <Notice tone="info">
-            <strong>SETTLED ✓</strong> · {formatRF(active.settledWei, 2)} RF settled. LP earned{' '}
-            {formatRF(lpSpreadWei, 2)} RF and {formatRF(burnWei, 2)} RF is modelled as a Rare Advance burn.
-            Progress: {progressPct}%.
-          </Notice>
-        </div>
-      ) : null}
-
-      <div style={{ marginTop: 8 }}>
-        <Note>{NO_PROMISE_COPY.simulation}</Note>
-      </div>
-      <div style={{ marginTop: 6 }}>
-        <Note>{NO_PROMISE_COPY.transferRisk}</Note>
-      </div>
-    </Panel>
-  )
+const inputStyle: CSSProperties = {
+  font: 'inherit',
+  padding: '8px',
+  width: 150,
+  border: '2px solid var(--ink)',
+  background: 'var(--paper)',
+  minHeight: 40,
 }
-
-export const ADVANCE_PROVENANCE: DataProvenance = 'simulated'

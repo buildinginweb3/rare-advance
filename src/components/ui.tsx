@@ -39,6 +39,7 @@ export function Lcd({
   children,
   id,
   valueTestId,
+  testId,
 }: {
   label: string
   value?: ReactNode
@@ -48,9 +49,11 @@ export function Lcd({
   children?: ReactNode
   id?: string
   valueTestId?: string
+  /** Test hook on the whole cell. */
+  testId?: string
 }) {
   return (
-    <div className="lcd">
+    <div className="lcd" data-testid={testId}>
       <div className="lcd-label">
         <span>{label}</span>
         {right}

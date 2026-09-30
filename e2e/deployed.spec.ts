@@ -30,40 +30,40 @@ test.describe('PUBLIC DEPLOYMENT', () => {
 
     // Demo Mode must work on a static host with no server-side proxy
     await enterDemo(page)
-    await expect(page.getByTestId('device')).toBeVisible()
+    await expect(page.getByTestId('friend-hero')).toBeVisible()
 
-    // the whole primary interaction works
-    await page.getByTestId('friend-card-Genesis:500').click()
-    await page.getByTestId('nav-advance').click()
-    await page.getByTestId('preset-max').click()
-    const settlement = Number(/([\d,.]+)/.exec(await page.getByTestId('quote-settlement').innerText())![1]!.replace(/,/g, ''))
-    const received = Number(/([\d,.]+)/.exec(await page.getByTestId('quote-receive').innerText())![1]!.replace(/,/g, ''))
-    expect(settlement).toBeGreaterThan(0)
-    expect(received / settlement).toBeCloseTo(0.95, 3)
+    // 1. competing pool offers, internally consistent
+    await page.getByTestId('home-primary').click()
+    const offers = page.getByTestId('offers')
+    await expect(offers.locator('> button').first()).toBeVisible()
+    const first = ((await offers.locator('> button').first().textContent()) ?? '').replace(/\s+/g, ' ')
+    const now = Number(/YOU GET NOW([\d,.]+)/i.exec(first)?.[1]?.replace(/,/g, '') ?? '0')
+    const settle = Number(/SETTLEMENT([\d,.]+)/i.exec(first)?.[1]?.replace(/,/g, '') ?? '0')
+    expect(settle).toBeGreaterThan(0)
+    // the holder always receives less than the stream settles for
+    expect(now / settle).toBeLessThan(1)
 
+    // 2. taking the advance and paying it back
+    await offers.locator('> button').first().click()
     await page.getByTestId('take-advance').click()
-    await expect(page.getByTestId('settlement-scene')).toBeVisible()
-    await page.waitForTimeout(4200)
-    for (let i = 0; i < 8; i += 1) {
-      if (await page.getByTestId('advance-settled-banner').isVisible().catch(() => false)) break
-      await page.getByTestId('simulate-time').click()
-    }
-    await expect(page.getByTestId('advance-settled-banner')).toBeVisible()
+    await page.getByTestId('confirm-advance').click()
+    await expect(page.getByTestId('advance-active')).toBeVisible()
+    await page.getByTestId('repay-pay-off').click()
+    await page.getByTestId('repay-submit').click()
+    await page.waitForTimeout(600)
+    await expect(page.getByTestId('advance-payoff-quote')).toHaveCount(0)
 
-    // Grow financing works
-    await page.getByTestId('nav-dashboard').click()
-    await page.getByTestId('friend-card-Generations:77045').click()
-    await page.getByTestId('nav-grow').click()
-    await page.getByTestId('model-financing-reactivate').click()
-    await expect(page.getByTestId('finance-quote')).toBeVisible()
-    await page.getByTestId('confirm-finance').click()
-    await expect(page.getByText('ACTIVATION FINANCE MODEL ACTIVE')).toBeVisible()
-
-    // Liquidity works
+    // 3. joining a pool with simulated RF
     await page.getByTestId('nav-liquidity').click()
-    await page.getByTestId('lp-preset-10000').click()
-    await page.getByTestId('lp-provide').click()
-    await expect(page.getByTestId('lp-user-position')).toBeVisible()
+    await page.getByTestId('pool-row-pool-default').click()
+    await page.getByTestId('contribute-custom').fill('25000')
+    await page.getByTestId('contribute-submit').click()
+    await expect(page.getByTestId('lp-table')).toContainText('25,000')
+
+    // 4. the pool market agrees with itself
+    await page.getByTestId('close-pool-detail').click()
+    await expect(page.getByTestId('market-pool-count')).toContainText('5')
+    await expect(page.getByTestId('market-available')).toContainText('269,000 RF')
 
     // No console errors and no failed requests
     expect(consoleErrors, consoleErrors.join(' | ')).toEqual([])

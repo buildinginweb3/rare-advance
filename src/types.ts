@@ -216,17 +216,26 @@ export interface GrowthFinancePosition {
 
 export type ConnectionStatus =
   | 'idle'
-  | 'connecting'
+  | 'discovering'
+  | 'choosing'
+  | 'requesting-accounts'
+  | 'switching-network'
   | 'connected'
   | 'rejected'
   | 'unsupported'
   | 'wrong-network'
+  | 'switch-unavailable'
+  | 'disconnected'
+  | 'error'
 
 export interface WalletState {
   status: ConnectionStatus
   address: `0x${string}` | null
   chainId: number | null
+  /** Human-readable, never a raw RPC string. */
   error: string | null
+  /** What the user can do next. */
+  hint: string | null
 }
 
 export type DataStatus = 'idle' | 'loading' | 'ready' | 'error'

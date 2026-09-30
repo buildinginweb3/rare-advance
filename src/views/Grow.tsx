@@ -1,80 +1,77 @@
+/**
+ * GROW — THE FRIEND'S NEXT STEP
+ * =============================
+ *
+ * Rare Friends has activation, hardwiring, reactivation, promotion and tiers.
+ * Showing all of that at once is how this screen became intimidating, so the
+ * selected Friend decides what appears, and only valid actions are ever offered.
+ *
+ * Flow:
+ *   what can this Friend do next  ->  EXPLORE FINANCING  ->  choose a pool
+ *   ->  PAY SOME NOW  ->  SEE ESTIMATE
+ *
+ * The complete protocol table lives behind VIEW RARE FRIENDS RULES.
+ */
+
 import { useMemo, useState } from 'react'
-import { Badge, Lcd, Note, Notice, Panel, RfChip, Stat } from '../components/ui'
-import { Device } from '../components/Device'
-import { GROW_CONTRIBUTION_PRESETS, GROW_FINANCE, NO_PROMISE_COPY, SIM_TIME_STEP_MS } from '../economy/rareAdvanceConfig'
-import {
-  formatBpsAsPercent,
-  formatDurationLong,
-  formatShare,
-  formatRF,
-  formatWeight,
-  formatWeightDelta,
-  mulBps,
-  BPS_SCALE,
-  parseRF,
-  parseWeight,
-} from '../math/rf'
-import { availableActions, genesisFullyWeighted, plannerOptions, type PlannerOption } from '../protocol/actions'
+import { Badge, Note, Notice, Panel, Stat } from '../components/ui'
+import { formatBpsAsPercent, formatRF, formatWeight, formatWeightDelta, mulBps, parseRF as parseRf, BPS_SCALE } from '../math/rf'
+import { availableActions, genesisFullyWeighted, plannerOptions, promotionCostFor } from '../protocol/actions'
 import { GENERATION_SCHEDULE, GENESIS, MAX_TIER } from '../protocol/rareFriendsConfig'
-import { promotionCostFor } from '../protocol/actions'
-import { breakdownFinance, modelPayback, quoteGrowthFinance } from '../economy/growth'
-import { useDispatch, useSession, selectedFriend, sessionNowMs, type ViewId } from '../session/store'
-import { ACTIVATION_HERO_CAPTION, GROW_HEADLINE, GROW_SUB } from '../content/copy'
-import { ActivationHero } from '../components/ActivationHero'
+import { growthOffers, type GrowthOffer } from '../economy/pools/market'
+import { minOwnerContributionBps } from '../economy/pools/terms'
+import { parseWeight } from '../math/rf'
+import { useDispatch, useSession, selectedFriend } from '../session/store'
+import { LOCAL_LP_ID, useMarket, useMarketDispatch } from '../session/marketStore'
+import { GROW_HEADLINE } from '../content/copy'
+import type { GrowthAction } from '../types'
+
+/** Simple term: how much modeled WETH this Friend earns over the financing. */
+const MODEL_WETH_PER_DAY = 5n * 10n ** 16n // 0.05 WETH per day
 
 export function GrowView() {
   const state = useSession()
-  const dispatch = useDispatch()
+  const market = useMarket()
   const friend = selectedFriend(state)
-  const nowMs = sessionNowMs(state)
+
   const actions = useMemo(() => (friend ? availableActions(friend) : []), [friend])
   const planner = useMemo(() => (friend ? plannerOptions(friend) : []), [friend])
-  const [activeActionId, setActiveActionId] = useState<string | null>(null)
-  const [plannerIndex, setPlannerIndex] = useState(0)
-
-  const financeState = state.finances.find((f) => f.friendKey === state.selectedFriendKey) ?? null
+  const [financeActionId, setFinanceActionId] = useState<string | null>(null)
+  const [showRules, setShowRules] = useState(false)
 
   return (
     <div className="stack">
       <Panel dark>
-        <div className="grid-hero">
-          <div className="stack">
-            <h1 className="h2" style={{ fontSize: 'clamp(14px, 4vw, 22px)' }}>
-              {GROW_HEADLINE}
-            </h1>
-            <p className="tiny" style={{ color: 'var(--gray-2)', maxWidth: 420 }}>
-              {GROW_SUB}
-            </p>
-            <Note dark>
-              SIMULATED CONCEPT · This section models FUTURE ACTIVATION FINANCE. No Rare Friends action is
-              taken, no RF is spent, and the Rare Friends contracts do not currently support the reward routing
-              this model assumes.
-            </Note>
-            <div className="row">
-              <span className="tiny" style={{ color: 'var(--paper)' }}>
-                SELECTED
-              </span>
-              <span className="h3" style={{ fontSize: 9, color: 'var(--paper)' }}>
-                {friend ? `${friend.collection} #${friend.tokenId}` : 'NONE'}
-              </span>
-              {friend ? <Badge provenance={friend.weight} /> : null}
-            </div>
-          </div>
-          <Device
-            friend={friend}
-            view={state.view}
-            mode={state.mode}
-            live={state.live}
-            advance={null}
-            onNavigate={(v: ViewId) => dispatch({ type: 'set-view', view: v })}
-          />
-        </div>
+        <h1 className="h2" style={{ fontSize: 'clamp(14px, 4vw, 22px)' }}>
+          {GROW_HEADLINE}
+        </h1>
+        <p className="tiny" style={{ color: 'var(--gray-2)', maxWidth: 440, marginTop: 6 }}>
+          Rare Friends can spend RF to increase a Friend&apos;s reward weight. Rare Advance explores whether
+          future rewards could help finance that cost.
+        </p>
       </Panel>
 
-      <ActivationHero />
+      <Panel title="HOW IT WORKS">
+        <div className="mini-flow">
+          {['PAY SOME NOW', 'RARE ADVANCE', 'GROW FRIEND', 'MORE REWARD WEIGHT', 'FUTURE REWARDS', 'MODELED REPAYMENT'].map(
+            (n, i) => (
+              <div key={n} className="mini-flow-node">
+                <span className="h3" style={{ fontSize: 7 }}>
+                  {n}
+                </span>
+                {i < 5 ? <span className="mini-flow-arrow" aria-hidden="true" /> : null}
+              </div>
+            ),
+          )}
+        </div>
+        <Note>
+          SIMULATED CONCEPT. No Rare Friends action is taken and no RF is spent. The Rare Friends contracts do
+          not currently support the reward routing this models.
+        </Note>
+      </Panel>
 
       {!friend ? (
-        <Notice tone="info">Select a Friend on the dashboard to see its valid Rare Friends actions.</Notice>
+        <Notice tone="info">Select a Friend on HOME to see what it can do next.</Notice>
       ) : null}
 
       {friend && actions.length === 0 ? (
@@ -89,626 +86,422 @@ export function GrowView() {
 
       {friend && actions.length > 0 ? (
         <Panel
-          title="VALID ACTIONS"
+          title="WHAT CAN THIS FRIEND DO NEXT?"
           right={
-            <Badge
-              provenance={friend.stateSource === 'onchain' ? 'onchain' : 'simulated'}
-              label={friend.stateSource === 'onchain' ? 'STATE · LIVE ONCHAIN' : 'STATE · SIMULATED'}
-            />
+            <span className="tiny muted">
+              {friend.collection === 'Genesis' ? 'GENESIS' : `GEN ${friend.generation}`}
+              {friend.tier !== null ? ` · TIER ${friend.tier}` : ''} · {friend.activated ? 'ACTIVE' : 'INACTIVE'}
+            </span>
           }
         >
-          <div className="lcd" style={{ marginBottom: 10 }}>
-            <div className="lcd-label">
-              <span>SELECTED FRIEND</span>
-              <span>
-                {friend.activated ? 'ACTIVE' : 'INACTIVE'}
-                {friend.collection === 'Generations'
-                  ? friend.temporary
-                    ? ' · TEMPORARY'
-                    : ` · GEN ${friend.generation}`
-                  : ''}
-                {friend.tier !== null ? ` · TIER ${friend.tier}` : ''}
-              </span>
-            </div>
-            <div className="lcd-value lcd-value-sm">{friend.collection} #{friend.tokenId}</div>
-            <div className="tiny muted" style={{ marginTop: 2 }}>
-              Current weight {formatWeight(friend.weightMicros, 2)} ·{' '}
-              {friend.weight === 'onchain' ? 'LIVE · ONCHAIN' : friend.weight === 'simulated' ? 'SIMULATED' : 'MODELED'}
-            </div>
-          </div>
-
-          <div className="grid-2">
-            {actions.map((a) => {
-              const d = a.effect.weightAfterMicros - a.effect.weightBeforeMicros
-              return (
-                <div className="panel" key={a.id} data-testid={`action-${a.kind}`}>
-                  <div className="panel-head">
-                    <h3 className="h3">{a.title}</h3>
-                    <span className="spacer" />
-                    <Badge provenance="protocol" label="PROTOCOL ACTION" />
-                  </div>
-                  <p className="tiny muted" style={{ marginTop: 0 }}>
-                    {a.subject}
-                  </p>
-                  <div className="panel-recess">
-                    <Stat
-                      label="Current weight"
-                      provenance={friend.weight}
-                      value={formatWeight(a.effect.weightBeforeMicros, 6)}
-                    />
-                    <Stat label="New weight" value={formatWeight(a.effect.weightAfterMicros, 6)} />
-                    <Stat
-                      label="Action cost"
-                      value={a.costKnown ? `${formatRF(a.effect.costWei, 4)} RF` : 'BALANCE-DEPENDENT'}
-                    />
-                    {a.costKnown ? (
-                      <>
-                        <Stat label="New weight" value={formatWeight(a.effect.weightAfterMicros, 6)} />
-                        <Stat label="Weight change" value={formatWeightDelta(d)} />
-                      </>
-                    ) : null}
-                  </div>
-                  {a.costKnown ? (
-                    <div className="panel-recess" style={{ marginTop: 6 }}>
-                      <div className="h3" style={{ fontSize: 7, marginBottom: 4 }}>
-                        RARE FRIENDS PROTOCOL EFFECT
-                      </div>
-                      <Stat
-                        label="RF burned"
-                        provenance="protocol"
-                        value={`${formatRF(a.effect.protocolBurnWei, 4)} RF`}
-                      />
-                      <Stat
-                        label="RF reward funding"
-                        provenance="protocol"
-                        value={`${formatRF(a.effect.protocolRewardFundingWei, 4)} RF`}
-                      />
-                    </div>
-                  ) : null}
-                  <ul className="tiny muted" style={{ margin: '6px 0 0', paddingLeft: 15, lineHeight: 1.7 }}>
-                    {a.consequences.map((c) => (
-                      <li key={c}>{c}</li>
-                    ))}
-                  </ul>
-                  {a.costKnown ? (
-                    <div style={{ marginTop: 8 }}>
-                      <button
-                        type="button"
-                        className="btn btn-block"
-                        onClick={() => setActiveActionId(a.id)}
-                        data-testid={`model-financing-${a.kind}`}
-                      >
-                        MODEL FINANCING
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="note" style={{ marginTop: 8 }}>
-                      Rare Advance does not model financing for this action because the protocol does not
-                      determine a single cost from onchain state. Your live RF balance selects the generation at
-                      the moment of the transaction.
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-
-          {activeActionId
-            ? (() => {
-                const a = actions.find((x) => x.id === activeActionId)
-                if (!a || !a.costKnown) return null
-                return <FinancingPanel actionId={activeActionId} onClose={() => setActiveActionId(null)} nowMs={nowMs} />
-              })()
-            : null}
-        </Panel>
-      ) : null}
-
-      {/* ---------- What could I become? ---------- */}
-      {friend && friend.collection === 'Generations' && planner.length > 0 ? (
-        <Panel title="WHAT COULD I BECOME?" right={<Badge provenance="simulated" label="PLANNER" />}>
-          <div className="btn-group" style={{ gridTemplateColumns: `repeat(${Math.min(planner.length, 3)}, minmax(0, 1fr))` }} role="group" aria-label="Planner options">
-            {planner.map((p, i) => (
-              <button
-                key={p.title}
-                type="button"
-                className="btn btn-outline btn-sm btn-toggle"
-                aria-pressed={plannerIndex === i}
-                onClick={() => setPlannerIndex(i)}
-                data-testid={`planner-${i}`}
-              >
-                {p.title}
-              </button>
+          <div className="stack">
+            {actions.map((a) => (
+              <ActionCard
+                key={a.id}
+                action={a}
+                onExplore={() => a.costKnown && setFinanceActionId(a.id)}
+                expanded={financeActionId === a.id}
+                market={market}
+              />
             ))}
           </div>
-          <div style={{ marginTop: 10 }}>
-            <PlannerCard option={planner[plannerIndex]} nowMs={nowMs} />
-          </div>
-          <div style={{ marginTop: 8 }}>
-            <Note>
-              Sequential upgrades cannot be skipped and impossible promotions are not offered. Promotion resets
-              tier to 0, so the upgrade path has to be planned again afterwards.
-            </Note>
-          </div>
         </Panel>
       ) : null}
 
-      {/* ---------- generation schedule reference ---------- */}
-      <Panel
-        title="GENERATION ECONOMICS"
-        testId="generation-table"
-        right={<Badge provenance="protocol" label="OFFICIAL PROTOCOL TABLE" />}
-      >
-        <div className="table-scroll">
-          <table className="tbl">
-            <caption className="sr-only">Rare Friends Generations protocol cost and weight table</caption>
-            <thead>
-              <tr>
-                <th scope="col">Gen</th>
-                <th scope="col" className="num">
-                  Hardwire
-                </th>
-                <th scope="col" className="num">
-                  Reactivate
-                </th>
-                <th scope="col" className="num">
-                  Promote to
-                </th>
-                <th scope="col" className="num">
-                  Tier 0
-                </th>
-                <th scope="col" className="num">
-                  Tier 4
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {GENERATION_SCHEDULE.map((s) => {
-                const promote =
-                  s.generation > 1
-                    ? `${s.generation - 1} · ${formatRF(parseRF(promotionCostFor(s.generation)), 0)} RF`
-                    : '—'
-                return (
-                  <tr key={s.generation} data-testid={`gen-row-${s.generation}`}>
-                    <th scope="row">GEN {s.generation}</th>
-                    <td className="num">{formatRF(parseRF(s.hardwire), 4)} RF</td>
-                    <td className="num">{formatRF(parseRF(s.reactivate), 4)} RF</td>
-                    <td className="num">{promote}</td>
-                    <td className="num">{formatWeight(parseWeight(s.tierWeights[0]), 6)}</td>
-                    <td className="num">{formatWeight(parseWeight(s.tierWeights[MAX_TIER]), 6)}</td>
-                  </tr>
-                )
-              })}
-              <tr>
-                <th scope="row">GENESIS</th>
-                <td className="num">{formatRF(parseRF(GENESIS.activationCost), 0)} RF</td>
-                <td className="num strike">no path</td>
-                <td className="num strike">no path</td>
-                <td className="num">{formatWeight(parseWeight(GENESIS.activeRewardWeight), 0)}</td>
-                <td className="num strike">no path</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div style={{ marginTop: 8 }}>
-          <Note>
-            Every payment splits 50% RF burned and 50% RF reward funding. Reward weight is allocation weight,
-            not tokens, yield or return.
-          </Note>
-        </div>
-      </Panel>
+      {friend && friend.collection === 'Generations' && planner.length > 0 ? (
+        <Panel
+          title="WHAT COULD I BECOME?"
+          right={<Badge provenance="simulated" label="PLANNER" />}
+        >
+          <PlannerSummary options={planner} />
+        </Panel>
+      ) : null}
 
-      {/* ---------- active financing ---------- */}
-      {financeState ? <FinancePositionCard /> : null}
+      <Panel
+        title="RARE FRIENDS RULES"
+        right={
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowRules((v) => !v)} data-testid="toggle-rules">
+            {showRules ? 'HIDE' : 'VIEW RARE FRIENDS RULES'}
+          </button>
+        }
+      >
+        {!showRules ? (
+          <p className="tiny muted" style={{ margin: 0 }}>
+            The complete official protocol cost and weight table, and the rules Rare Advance follows, are here.
+          </p>
+        ) : (
+          <>
+            <div className="table-scroll">
+              <table className="tbl" data-testid="generation-table">
+                <caption className="sr-only">Rare Friends Generations protocol cost and weight table</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Gen</th>
+                    <th scope="col" className="num">Hardwire</th>
+                    <th scope="col" className="num">Reactivate</th>
+                    <th scope="col" className="num">Promote to</th>
+                    <th scope="col" className="num">Tier 0</th>
+                    <th scope="col" className="num">Tier 4</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {GENERATION_SCHEDULE.map((s) => (
+                    <tr key={s.generation} data-testid={`gen-row-${s.generation}`}>
+                      <th scope="row">GEN {s.generation}</th>
+                      <td className="num">{formatRF(parseRf(s.hardwire), 4)} RF</td>
+                      <td className="num">{formatRF(parseRf(s.reactivate), 4)} RF</td>
+                      <td className="num">
+                        {s.generation > 1 ? `${s.generation - 1} · ${formatRF(parseRf(promotionCostFor(s.generation)), 0)} RF` : '—'}
+                      </td>
+                      <td className="num">{formatWeight(parseWeight(s.tierWeights[0]!), 6)}</td>
+                      <td className="num">{formatWeight(parseWeight(s.tierWeights[MAX_TIER]!), 6)}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <th scope="row">GENESIS</th>
+                    <td className="num">{formatRF(parseRf(GENESIS.activationCost), 0)} RF</td>
+                    <td className="num strike">no path</td>
+                    <td className="num strike">no path</td>
+                    <td className="num">{formatWeight(parseWeight(GENESIS.activeRewardWeight), 0)}</td>
+                    <td className="num strike">no path</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <ul className="tiny" style={{ marginTop: 8, paddingLeft: 16, lineHeight: 1.8 }}>
+              <li>A direct transfer or sale clears activation and upgrades.</li>
+              <li>Reactivation restarts at tier 0. Previous upgrade payments are not refunded or credited.</li>
+              <li>Promotion resets tier to 0 and can never move a Generation into Genesis.</li>
+              <li>Upgrades are sequential: tier n to n+1 only.</li>
+              <li>Every payment splits 50% RF burned and 50% RF reward funding.</li>
+              <li>Reward weight is allocation weight, not tokens, yield, return or ROI.</li>
+            </ul>
+          </>
+        )}
+      </Panel>
     </div>
   )
 }
 
-function PlannerCard({ option, nowMs }: { option: PlannerOption; nowMs: number }) {
-  void nowMs
-  const state = useSession()
-  const d = option.weightAfterMicros - option.weightBeforeMicros
-  // Reuse the single payback model rather than a second copy of the maths, so
-  // the planner and the financing panel can never disagree.
-  const rate = state.live.rfStream.rateWeiPerSec
-  const total = state.live.totalActiveWeightMicros
-  const premium = mulBps(option.costWei, GROW_FINANCE.premiumBps)
-  const payback =
-    rate !== null && total !== null
-      ? modelPayback(
-          option.costWei + premium,
-          option.weightAfterMicros,
-          option.weightBeforeMicros,
-          total,
-          rate,
-        )
+// ---------------------------------------------------------------------------
+// Action card
+// ---------------------------------------------------------------------------
+
+function ActionCard({
+  action,
+  onExplore,
+  expanded,
+  market,
+}: {
+  action: GrowthAction
+  onExplore: () => void
+  expanded: boolean
+  market: ReturnType<typeof useMarket>
+}) {
+  const d = action.effect.weightAfterMicros - action.effect.weightBeforeMicros
+  return (
+    <div className="panel" data-testid={`action-${action.kind}`}>
+      <div className="panel-head">
+        <h3 className="h3">{action.title}</h3>
+        <span className="spacer" />
+        <Badge provenance="protocol" label="PROTOCOL ACTION" />
+      </div>
+      <p className="tiny muted" style={{ marginTop: 0 }}>
+        {action.subject}
+      </p>
+
+      {action.costKnown ? (
+        <>
+          <div className="grid-2">
+            <Stat label="Cost" value={`${formatRF(action.effect.costWei, 4)} RF`} />
+            <div>
+              <Stat label="Reward weight" value={`${formatWeight(action.effect.weightBeforeMicros, 6)} → ${formatWeight(action.effect.weightAfterMicros, 6)}`} />
+              <Stat label="Change" value={formatWeightDelta(d)} />
+            </div>
+          </div>
+          <div className="row" style={{ marginTop: 8 }}>
+            <button type="button" className="btn" onClick={onExplore} data-testid={`explore-financing-${action.kind}`}>
+              EXPLORE FINANCING
+            </button>
+          </div>
+        </>
+      ) : (
+        <Note>
+          Your live RF balance selects the highest generation you can afford, so the exact cost is only known at
+          the moment of the transaction. Rare Advance does not model financing for it.
+        </Note>
+      )}
+
+      {expanded && action.costKnown ? (
+        <FinancingSheet action={action} market={market} />
+      ) : null}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Financing sheet
+// ---------------------------------------------------------------------------
+
+function FinancingSheet({ action, market }: { action: GrowthAction; market: ReturnType<typeof useMarket> }) {
+  const dispatch = useDispatch()
+  const marketDispatch = useMarketDispatch()
+  const [contributionBps, setContributionBps] = useState<bigint>(2_500n)
+  const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null)
+  const [showEstimate, setShowEstimate] = useState(false)
+
+  const cost = action.effect.costWei
+  const youPay = (cost * contributionBps) / BPS_SCALE
+  const generation = action.effect.weightBeforeMicros > 0n && action.friendKey.startsWith('Generations')
+    ? Number(action.friendKey.split(':')[1] ?? 0)
+    : Number(/GEN (\d)/.exec(action.subject)?.[1] ?? 0)
+
+  const offers: GrowthOffer[] = useMemo(
+    () =>
+      growthOffers(market.pools, {
+        friendKey: action.friendKey,
+        actionKind: action.kind,
+        actionCostWei: cost,
+        ownerContributionWei: youPay,
+        generation,
+        borrowerLpId: LOCAL_LP_ID,
+        modeledWethForFriendWei: MODEL_WETH_PER_DAY * 30n,
+      }),
+    [market.pools, action.friendKey, action.kind, cost, generation, youPay],
+  )
+
+  const offer = offers.find((o) => o.poolId === selectedPoolId) ?? offers[0] ?? null
+  const pool = offer ? market.pools.find((p) => p.id === offer.poolId) : undefined
+  const financed = offer ? offer.poolFinancesWei : cost - youPay
+  const weightAfter = action.effect.weightAfterMicros
+  const weightIncreasePct =
+    action.effect.weightBeforeMicros > 0n
+      ? ((weightAfter - action.effect.weightBeforeMicros) * 10_000n) / action.effect.weightBeforeMicros
       : null
 
   return (
-    <div className="panel" data-testid="planner-card">
-      <div className="panel-head">
-        <h3 className="h3">{option.title}</h3>
-        <span className="spacer" />
-        <Badge provenance="simulated" label="MODELED" />
-      </div>
-      <p className="tiny muted" style={{ marginTop: 0 }}>
-        {option.subject}
-      </p>
-      <div className="panel-recess">
-        <Stat label="Protocol cost" value={`${formatRF(option.costWei, 4)} RF`} />
-        <Stat label="Current weight" value={formatWeight(option.weightBeforeMicros, 6)} />
-        <Stat label="New weight" value={formatWeight(option.weightAfterMicros, 6)} />
-        <Stat label="Weight delta" value={formatWeightDelta(d)} />
-        <Stat
-          label="Simulated finance amount (50% contribution)"
-          provenance="simulated"
-          value={`${formatRF(option.costWei / 2n, 4)} RF`}
-        />
-        <Stat
-          label="Modeled payback"
-          provenance={payback === null ? 'simulated' : 'modeled'}
-          value={
-            payback === null
-              ? 'DEMO SCENARIO'
-              : formatDurationLong(payback.modeledPaybackSeconds * 1000n)
-          }
-        />
-      </div>
-      <div style={{ marginTop: 6 }}>
-        <Note>{NO_PROMISE_COPY.advanceModel}</Note>
-      </div>
-    </div>
-  )
-}
-
-function FinancingPanel({ actionId, onClose, nowMs }: { actionId: string; onClose: () => void; nowMs: number }) {
-  const state = useSession()
-  const dispatch = useDispatch()
-  const friend = state.friends.find((f) => f.key === state.selectedFriendKey) ?? null
-  const action = friend ? availableActions(friend).find((a) => a.id === actionId) : null
-  const [contributionBps, setContributionBps] = useState<bigint>(0n)
-  const [custom, setCustom] = useState('')
-  const [customContribution, setCustomContribution] = useState<bigint | null>(null)
-
-  if (!action) return null
-
-  const cost = action.effect.costWei
-  const contribution = customContribution ?? (cost * contributionBps) / BPS_SCALE
-  const breakdown = breakdownFinance(action, contribution)
-  const demoRate = state.mode === 'demo' ? state.live.rfStream.rateWeiPerSec : null
-  void nowMs
-
-  const quote = buildPreviewQuote(action, contribution, state, demoRate)
-
-  return (
-    <div className="lcd" style={{ marginTop: 12 }} data-testid="financing-panel">
-      <div className="lcd-label">
-        <span>ACTIVATION FINANCE · MODEL FINANCING</span>
-        <Badge provenance="simulated" label="SIMULATED" />
+    <div className="panel-recess" style={{ marginTop: 10 }} data-testid="finance-sheet">
+      <div className="h3" style={{ fontSize: 8, marginBottom: 6 }}>
+        {action.title.toUpperCase()} · COST {formatRF(cost, 4)} RF
       </div>
 
-      <div className="grid-3">
-        <Lcd label="ACTION" value={action.title} small sub={action.subject} />
-        <Lcd label="ACTION COST" value={`${formatRF(cost, 4)} RF`} small />
-        <Lcd label="YOUR CONTRIBUTION" value={`${formatRF(breakdown.userContributionWei, 4)} RF`} small />
+      <div className="h3" style={{ fontSize: 8, margin: '10px 0 4px' }}>
+        HOW MUCH DO YOU WANT TO PAY TODAY?
       </div>
-
-      <div style={{ marginTop: 10 }}>
-        <div className="lcd-label">
-          <span>CONTRIBUTION</span>
-        </div>
-        <label className="sr-only" htmlFor="grow-bps">
-          Your contribution to the action cost
-        </label>
-        <input
-          id="grow-bps"
-          className="slider"
-          type="range"
-          min={0}
-          max={100}
-          step={1}
-          value={Number(contributionBps / 100n)}
-          onChange={(e) => {
-            setCustom('')
-            setCustomContribution(null)
-            setContributionBps(BigInt(e.target.value) * 100n)
-          }}
-          aria-valuetext={`${Number(contributionBps / 100n)} percent contributed by you`}
-        />
-        <div className="btn-group" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }} role="group" aria-label="Contribution presets">
-          {GROW_CONTRIBUTION_PRESETS.map((p) => (
-            <button
-              key={p.key}
-              type="button"
-              className="btn btn-outline btn-sm btn-toggle"
-              aria-pressed={contributionBps === p.bps}
-              onClick={() => {
-                setContributionBps(p.bps)
-                setCustom('')
-                setCustomContribution(null)
-              }}
-              data-testid={`contribution-${p.label.replace('%', '')}`}
-            >
-              {p.label}
-            </button>
-          ))}
+      <div className="btn-group" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }} role="group" aria-label="Contribution presets">
+        {(
+          [
+            [0n, '0%'],
+            [2_500n, '25%'],
+            [5_000n, '50%'],
+            [BPS_SCALE, '100%'],
+          ] as [bigint, string][]
+        ).map(([v, label]) => (
           <button
+            key={label}
             type="button"
-            className="btn btn-outline btn-sm"
-            onClick={() => {
-              try {
-                const v = parseCustomRf(custom)
-                setCustomContribution(v > cost ? cost : v)
-                if (cost > 0n) setContributionBps((v * BPS_SCALE) / cost)
-              } catch {
-                /* unchanged */
-              }
-            }}
-            data-testid="contribution-custom-apply"
+            className="btn btn-outline btn-sm btn-toggle"
+            aria-pressed={contributionBps === v}
+            onClick={() => setContributionBps(v)}
+            data-testid={`contribute-${label.replace('%', '')}`}
           >
-            {custom.trim() === '' ? 'CUSTOM' : 'APPLY'}
+            {label}
           </button>
-        </div>
-        <div className="row" style={{ marginTop: 6 }}>
-          <label className="tiny" htmlFor="grow-custom">
-            CUSTOM RF
-          </label>
-          <input
-            id="grow-custom"
-            style={{
-              font: 'inherit',
-              padding: '8px',
-              width: 140,
-              border: '2px solid var(--ink)',
-              background: 'var(--paper)',
-              minHeight: 36,
-            }}
-            inputMode="decimal"
-            placeholder="e.g. 281.25"
-            value={custom}
-            onChange={(e) => setCustom(e.target.value)}
-            data-testid="contribution-custom"
-          />
-        </div>
-      </div>
-
-      <div className="panel-recess" style={{ marginTop: 10 }} data-testid="finance-quote">
-        <Stat
-          label="You contribute"
-          provenance="simulated"
-          value={`${formatRF(breakdown.userContributionWei, 4)} RF`}
-        />
-        <Stat
-          label="Rare Advance finances"
-          provenance="simulated"
-          value={`${formatRF(breakdown.financedWei, 4)} RF`}
-        />
-        <Stat
-          label="Financing premium (5% of financed)"
-          provenance="simulated"
-          value={`${formatRF(breakdown.premiumWei, 4)} RF`}
-        />
-        <Stat
-          label="→ liquidity providers"
-          provenance="simulated"
-          value={`${formatRF(breakdown.premiumToLiquidityProvidersWei, 4)} RF`}
-        />
-        <Stat
-          label="→ additional Rare Advance burn"
-          provenance="simulated"
-          value={`${formatRF(breakdown.premiumToRareAdvanceBurnWei, 4)} RF`}
-        />
-        <Stat
-          label="Repayment target"
-          provenance="simulated"
-          value={`${formatRF(breakdown.repaymentTargetWei, 4)} RF`}
-        />
+        ))}
       </div>
 
       <div className="grid-2" style={{ marginTop: 8 }}>
-        <Lcd
-          label="NEW REWARD WEIGHT"
-          right={<Badge provenance="simulated" />}
-          value={formatWeight(quote.weightAfterMicros, 6)}
-          small
-        />
-        <Lcd
-          label="WEIGHT INCREASE"
-          right={<Badge provenance="simulated" />}
-          value={quote.weightIncreaseBps === null ? 'from zero' : formatBpsAsPercent(quote.weightIncreaseBps)}
-          small
-        />
+        <Stat label="You pay today" value={`${formatRF(youPay, 4)} RF`} />
+        <Stat label="Rare Advance models financing" provenance="simulated" value={`${formatRF(cost - youPay, 4)} RF`} />
       </div>
 
-      {/* payback */}
-      <div className="panel-recess" style={{ marginTop: 8 }} data-testid="payback-panel">
-        <div className="h3" style={{ fontSize: 7, marginBottom: 4 }}>
-          MODELED PAYBACK
-        </div>
-        {quote.payback ? (
-          <>
-            <Stat
-              label="Current total active weight"
-              provenance={state.live.totalActiveWeightProvenance}
-              value={formatWeight(quote.payback.totalActiveWeightMicros, 0)}
-            />
-            <Stat
-              label="Post-action total active weight"
-              provenance="modeled"
-              value={formatWeight(quote.payback.postActionTotalActiveWeightMicros, 0)}
-            />
-            <Stat
-              label="Post-action share of rewards"
-              provenance="modeled"
-              value={formatShare(quote.payback.postActionShareWad)}
-              hint="· share of the funded reward pool"
-            />
-            <Stat
-              label="Modeled RF per day"
-              provenance="modeled"
-              value={`${formatRF(quote.payback.modeledRfPerDayWei, 3)} RF`}
-            />
-            <Stat
-              label="Repayment RF per day (75% routing)"
-              provenance="modeled"
-              value={`${formatRF(quote.payback.repaymentRfPerDayWei, 3)} RF`}
-            />
-            <Stat
-              label="Modeled payback"
-              provenance="modeled"
-              valueTestId="payback-value"
-              value={formatDurationLong(quote.payback.modeledPaybackSeconds * 1000n)}
-              hint={
-                quote.payback.modeledPaybackSeconds * 1000n > 3_650n * 86_400_000n
-                  ? '· beyond any plausible horizon at the current stream rate'
-                  : undefined
-              }
-            />
-          </>
-        ) : (
-          <Notice tone="warn">
-            Live protocol inputs are unavailable, so no payback figure is shown. A demo scenario is not
-            presented as a live rate.
-          </Notice>
-        )}
-        <p className="tiny muted" style={{ margin: '6px 0 0' }}>
-          <Badge provenance={quote.paybackProvenance} /> {NO_PROMISE_COPY.advanceModel}
-        </p>
+      <div className="h3" style={{ fontSize: 8, margin: '12px 0 4px' }}>
+        CHOOSE A POOL
       </div>
+      {offers.length === 0 ? (
+        <Notice tone="warn">
+          No pool currently offers these terms for this action. Try a different contribution, or create a pool in
+          LIQUIDITY.
+        </Notice>
+      ) : (
+        <div className="stack" data-testid="growth-offers">
+          {offers.map((o) => (
+            <button
+              key={o.poolId}
+              type="button"
+              className="fcard offer-card"
+              aria-pressed={offer?.poolId === o.poolId}
+              onClick={() => setSelectedPoolId(o.poolId)}
+              data-testid={`growth-offer-${o.poolId}`}
+            >
+              <span className="fcard-body">
+                <span className="row-tight" style={{ marginBottom: 4 }}>
+                  {o.privatePool ? <Badge provenance="simulated" label="PRIVATE" /> : null}
+                  {o.badges.map((b) => (
+                    <Badge key={b} provenance="simulated" label={b} />
+                  ))}
+                </span>
+                <span className="fcard-name">{o.poolName}</span>
+                <span className="offer-grid">
+                  <span>
+                    <span className="tiny muted">YOU PAY TODAY</span>
+                    <span className="offer-figure">{formatRF(o.youPayTodayWei, 2)} RF</span>
+                  </span>
+                  <span>
+                    <span className="tiny muted">POOL FUNDS</span>
+                    <span className="offer-figure">{formatRF(o.poolFinancesWei, 2)} RF</span>
+                  </span>
+                  <span>
+                    <span className="tiny muted">RF REPAYMENT TARGET</span>
+                    <span className="offer-figure">{formatRF(o.repaymentTargetWei, 2)} RF</span>
+                  </span>
+                  <span>
+                    <span className="tiny muted">WETH SHARE</span>
+                    <span className="offer-figure">{formatBpsAsPercent(o.wethShareBps)}</span>
+                  </span>
+                </span>
+                <span className="tiny muted" style={{ display: 'block', marginTop: 4 }}>
+                  While active: {formatBpsAsPercent(o.rfRoutingBps)} RF rewards repay the pool ·{' '}
+                  {formatBpsAsPercent(o.wethShareBps)} of modeled WETH rewards goes to the pool
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
-      {/* routing */}
-      <div className="panel-recess" style={{ marginTop: 8 }}>
-        <div className="h3" style={{ fontSize: 7, marginBottom: 4 }}>
-          REWARD ROUTING WHILE FINANCING IS OUTSTANDING
-        </div>
-        <Stat
-          label="→ financing repayment"
-          provenance="simulated"
-          value={formatBpsAsPercent(GROW_FINANCE.repaymentRoutingBps, 0)}
-        />
-        <Stat
-          label="→ Friend owner"
-          provenance="simulated"
-          value={formatBpsAsPercent(GROW_FINANCE.ownerRoutingBps, 0)}
-        />
-        <div className="tiny muted" style={{ marginTop: 4 }}>
-          The Friend keeps earning while financing repays itself. After the repayment target is reached, 100%
-          of future rewards remain with the Friend.
-        </div>
-      </div>
+      {offer ? (
+        <>
+          <div className="panel-recess" style={{ marginTop: 8 }}>
+            <Stat
+              label="Reward weight after the action"
+              value={`${formatWeight(action.effect.weightBeforeMicros, 6)} → ${formatWeight(weightAfter, 6)}`}
+            />
+            {weightIncreasePct !== null ? (
+              <Stat label="Weight change" value={formatBpsAsPercent(weightIncreasePct)} hint="· allocation weight, not a guaranteed earning increase" />
+            ) : null}
+          </div>
 
-      {/* protocol split kept separate */}
-      <div className="panel-recess" style={{ marginTop: 8 }}>
-        <div className="h3" style={{ fontSize: 7, marginBottom: 4 }}>
-          UNDERLYING RARE FRIENDS ACTION (SEPARATE FROM RARE ADVANCE)
-        </div>
-        <Stat
-          label="Protocol RF burn (50% of action cost)"
-          provenance="protocol"
-          value={`${formatRF(action.effect.protocolBurnWei, 4)} RF`}
-        />
-        <Stat
-          label="Protocol RF reward funding (50% of action cost)"
-          provenance="protocol"
-          value={`${formatRF(action.effect.protocolRewardFundingWei, 4)} RF`}
-        />
-        <div className="tiny muted" style={{ marginTop: 4 }}>
-          These are the Rare Friends protocol economics. They are never combined with the Rare Advance
-          financing premium burn.
-        </div>
-      </div>
+          <div className="panel-recess" style={{ marginTop: 8 }}>
+            <div className="h3" style={{ fontSize: 7, marginBottom: 4 }}>
+              THE EXISTING RARE FRIENDS ACTION DOES THIS ANYWAY
+            </div>
+            <Stat label="Protocol RF burn" provenance="protocol" value={`${formatRF(action.effect.protocolBurnWei, 4)} RF`} />
+            <Stat label="Protocol RF reward funding" provenance="protocol" value={`${formatRF(action.effect.protocolRewardFundingWei, 4)} RF`} />
+            <p className="tiny muted" style={{ margin: '4px 0 0' }}>
+              This is the existing Rare Friends protocol split. Rare Advance does not add to it and never merges
+              the two.
+            </p>
+          </div>
 
-      <div style={{ marginTop: 10 }}>
-        <Note>{NO_PROMISE_COPY.simulation}</Note>
-      </div>
-      <div style={{ marginTop: 6 }}>
-        <Note>{NO_PROMISE_COPY.transferRisk}</Note>
-      </div>
-      <div style={{ marginTop: 6 }}>
-        <Note>{NO_PROMISE_COPY.weightNotYield}</Note>
-      </div>
+          <div className="row" style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className="btn btn-outline btn-sm"
+              onClick={() => setShowEstimate((v) => !v)}
+              data-testid="toggle-estimate"
+            >
+              {showEstimate ? 'HIDE ESTIMATE' : 'SEE ESTIMATE'}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={youPay < mulBps(cost, minOwnerContributionBps(pool?.terms ?? actionTerms(action)))}
+              onClick={() => {
+                marketDispatch({
+                  type: 'open-growth',
+                  poolId: offer.poolId,
+                  positionId: `gp-${Date.now().toString(36)}`,
+                  friendKey: action.friendKey,
+                  actionId: action.id,
+                  actionKind: action.kind,
+                  actionCostWei: cost,
+                  generation,
+                  ownerContributionWei: youPay,
+                  protocolBurnWei: action.effect.protocolBurnWei,
+                  protocolRewardFundingWei: action.effect.protocolRewardFundingWei,
+                  rfRepaymentPerDayWei: 25n * 10n ** 18n,
+                  wethPerDayWei: MODEL_WETH_PER_DAY,
+                })
+                dispatch({ type: 'set-view', view: 'advance' })
+              }}
+              data-testid="confirm-growth-finance"
+            >
+              CONFIRM SIMULATED FINANCING
+            </button>
+          </div>
 
-      <div className="row" style={{ marginTop: 10 }}>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => {
-            dispatch({ type: 'take-finance', friendKey: action.friendKey, action, contributionWei: breakdown.userContributionWei })
-            onClose()
-          }}
-          data-testid="confirm-finance"
-        >
-          CONFIRM SIMULATED FINANCING MODEL
-        </button>
-        <button type="button" className="btn btn-outline" onClick={onClose}>
-          CANCEL
-        </button>
-      </div>
-      <p className="tiny muted" style={{ marginBottom: 0 }}>
-        <RfChip /> {ACTIVATION_HERO_CAPTION} — simulation only.
-      </p>
+          {showEstimate ? (
+            <div className="panel-recess" style={{ marginTop: 8 }} data-testid="growth-estimate">
+              <div className="h3" style={{ fontSize: 7, marginBottom: 4 }}>
+                MODELED REPAYMENT
+              </div>
+              <Stat label="You pay today" provenance="simulated" value={`${formatRF(youPay, 4)} RF`} />
+              <Stat label="Pool finances" provenance="simulated" value={`${formatRF(financed, 4)} RF`} />
+              <Stat label="LP premium on financed RF" provenance="simulated" value={`${formatRF(offer.lpPremiumWei, 4)} RF`} />
+              <Stat label="RF repayment target" provenance="simulated" value={`${formatRF(offer.repaymentTargetWei, 4)} RF`} />
+              <Stat label="RF rewards routed to repayment" provenance="simulated" value={formatBpsAsPercent(offer.rfRoutingBps)} />
+              <Stat label="RF rewards to the Friend" provenance="simulated" value={formatBpsAsPercent(BPS_SCALE - offer.rfRoutingBps)} />
+              <Stat label="Modeled WETH to the pool" provenance="simulated" value={`${formatRF(offer.modeledWethToPoolWei, 6)} WETH`} />
+              <Stat label="Modeled WETH kept by the Friend" provenance="simulated" value={`${formatRF(offer.modeledWethToOwnerWei, 6)} WETH`} />
+              <p className="tiny muted" style={{ margin: '6px 0 0' }}>
+                WETH is tracked separately from RF and is never converted into it. Once RF repayment finishes,
+                the WETH share ends immediately and the Friend keeps 100% again.
+              </p>
+              <p className="tiny muted" style={{ margin: '4px 0 0' }}>
+                MODELED, NOT GUARANTEED. Reward share also depends on total active weight and funded activity.
+              </p>
+            </div>
+          ) : null}
+        </>
+      ) : null}
     </div>
   )
 }
 
-function buildPreviewQuote(
-  action: import('../types').GrowthAction,
-  contribution: bigint,
-  state: ReturnType<typeof useSession>,
-  demoRate: bigint | null,
-) {
-  return quoteGrowthFinance({
-    action,
-    userContributionWei: contribution,
-    totalActiveWeightMicros: state.live.totalActiveWeightMicros,
-    rfStreamRateWeiPerSec: state.live.rfStream.rateWeiPerSec ?? demoRate,
-    demoRfStreamRateWeiPerSec: demoRate,
-    totalActiveWeightProvenance: state.live.totalActiveWeightProvenance as 'onchain' | 'simulated',
-  })
+function actionTerms(action: GrowthAction) {
+  return {
+    streamPremiumBps: 0n,
+    rareAdvanceFeeBps: 0n,
+    maxAdvanceShareBps: BPS_SCALE,
+    maxStreamPositionWei: 1n,
+    growthPremiumBps: 0n,
+    growthMaxFinanceBps: BPS_SCALE,
+    growthRfRoutingBps: BPS_SCALE,
+    growthWethShareBps: 0n,
+    growthMaxPositionWei: 1n,
+    eligibleActions: [action.kind],
+    eligibleGenerations: null,
+  }
 }
 
-function parseCustomRf(raw: string): bigint {
-  const m = /^(\d*)(\.\d*)?$/.exec(raw.trim())
-  if (!m || (!m[1] && !m[2])) throw new Error('invalid')
-  const int = m[1] || '0'
-  const frac = (m[2] ?? '').replace('.', '').padEnd(18, '0').slice(0, 18)
-  return BigInt(int) * 10n ** 18n + BigInt(frac || '0')
-}
-
-function FinancePositionCard() {
-  const state = useSession()
-  const dispatch = useDispatch()
-  const f = state.finances.find((x) => x.friendKey === state.selectedFriendKey) ?? null
-  if (!f) return null
-  const q = f.quote
+function PlannerSummary({ options }: { options: ReturnType<typeof plannerOptions> }) {
+  const [index, setIndex] = useState(0)
+  const o = options[index]
+  if (!o) return null
+  const d = o.weightAfterMicros - o.weightBeforeMicros
   return (
-    <Panel
-      title="ACTIVATION FINANCE MODEL ACTIVE"
-      right={<Badge provenance="simulated" label={f.settled ? 'SETTLED ✓ · SIMULATED' : 'SIMULATED'} large />}
-    >
-      <div className="grid-3">
-        <Lcd label="FINANCED" value={`${formatRF(q.financedWei, 4)} RF`} small />
-        <Lcd label="REPAID" value={`${formatRF(f.repaidWei, 4)} RF`} small />
-        <Lcd
-          label="OUTSTANDING"
-          value={`${formatRF(q.repaymentTargetWei - f.repaidWei, 4)} RF`}
-          small
-        />
+    <div data-testid="planner-card">
+      <div className="btn-group" style={{ gridTemplateColumns: `repeat(${Math.min(options.length, 3)}, minmax(0, 1fr))` }}>
+        {options.map((p, i) => (
+          <button
+            key={p.title}
+            type="button"
+            className="btn btn-outline btn-sm btn-toggle"
+            aria-pressed={index === i}
+            onClick={() => setIndex(i)}
+            data-testid={`planner-${i}`}
+          >
+            {p.title}
+          </button>
+        ))}
       </div>
       <div className="panel-recess" style={{ marginTop: 8 }}>
-        <Stat label="Owner received while financing" provenance="simulated" value={`${formatRF(f.ownerReceivedWei, 4)} RF`} />
-        <Stat label="Premium → liquidity providers" provenance="simulated" value={`${formatRF(q.premiumToLiquidityProvidersWei, 4)} RF`} />
-        <Stat label="Premium → Rare Advance burn" provenance="simulated" value={`${formatRF(q.premiumToRareAdvanceBurnWei, 4)} RF`} />
-        <Stat label="Routing to repayment" provenance="simulated" value={formatBpsAsPercent(q.repaymentRoutingBps, 0)} />
-        <Stat label="Routing to owner" provenance="simulated" value={formatBpsAsPercent(q.ownerRoutingBps, 0)} />
+        <Stat label="Protocol cost" value={`${formatRF(o.costWei, 4)} RF`} />
+        <Stat label="New weight" value={formatWeight(o.weightAfterMicros, 6)} />
+        <Stat label="Weight delta" value={formatWeightDelta(d)} />
       </div>
-      <div className="row" style={{ marginTop: 10 }}>
-        <button type="button" className="btn" onClick={() => dispatch({ type: 'simulate-time' })} data-testid="simulate-time-grow">
-          SIMULATE TIME (+{SIM_TIME_STEP_MS / 3_600_000}H)
-        </button>
-        <span className="tiny muted">
-          {f.settled ? 'FINANCING SETTLED · 100% of future rewards remain with the Friend.' : 'The Friend keeps earning while financing repays itself.'}
-        </span>
-      </div>
-    </Panel>
+      <Note>Sequential upgrades cannot be skipped and impossible promotions are not offered.</Note>
+    </div>
   )
 }

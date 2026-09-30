@@ -34,35 +34,34 @@ for (const width of MOBILE_WIDTHS) {
       expect(box!.height).toBeGreaterThanOrEqual(40)
       await demo.click()
 
-      await page.getByTestId('friend-card-Genesis:500').click()
-      await page.getByTestId('nav-advance').click()
-      await page.getByTestId('preset-max').click()
-      await expect(page.getByTestId('advance-quote')).toBeVisible()
+      await page.getByTestId('home-primary').click()
+      await expect(page.getByTestId('offers')).toBeVisible()
+      await page.getByTestId('offers').locator('> button').first().click()
       const take = page.getByTestId('take-advance')
       const takeBox = await take.boundingBox()
       expect(takeBox!.height).toBeGreaterThanOrEqual(40)
       await take.click()
-      await expect(page.getByTestId('advance-card')).toBeVisible()
+      await expect(page.getByTestId('advance-confirm')).toBeVisible()
     })
 
-    test('the device scales cleanly and the Friend stays visible', async ({ page }) => {
+    test('the Friend hero scales cleanly and stays visible', async ({ page }) => {
       await page.goto('/')
       await page.getByTestId('try-demo').click()
-      const device = page.getByTestId('device')
-      await expect(device).toBeVisible()
-      const box = await device.boundingBox()
+      const hero = page.getByTestId('friend-hero')
+      await expect(hero).toBeVisible()
+      const box = await hero.boundingBox()
       expect(box!.width).toBeLessThanOrEqual(width)
-      // the Friend art is present in the top LCD
-      await expect(device.locator('.friend-art').first()).toBeVisible()
+      await expect(hero.locator('.friend-art').first()).toBeVisible()
     })
 
     test('financial numbers stay legible', async ({ page }) => {
       await page.goto('/')
       await page.getByTestId('try-demo').click()
-      const value = page.getByTestId('quote-settlement')
-      await page.getByTestId('nav-advance').click()
-      await page.getByTestId('preset-max').click()
-      const size = await value.evaluate((el) => parseFloat(getComputedStyle(el).fontSize))
+      await page.getByTestId('home-primary').click()
+      await page.waitForTimeout(300)
+      const figures = page.locator('.offer-figure, .lcd-value, .fcard .num').first()
+      await expect(figures).toBeVisible()
+      const size = await figures.evaluate((el) => parseFloat(getComputedStyle(el).fontSize))
       expect(size).toBeGreaterThanOrEqual(12)
     })
 
@@ -108,17 +107,28 @@ test.describe('ACCESSIBILITY', () => {
   test('provenance is never encoded by colour alone', async ({ page }) => {
     await page.goto('/')
     await page.getByTestId('try-demo').click()
-    const badges = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('.badge')).map((b) => ({
-        text: (b.textContent ?? '').trim(),
-        provenance: b.getAttribute('data-provenance'),
-      })),
-    )
-    expect(badges.length).toBeGreaterThan(3)
-    for (const b of badges) {
-      // every badge carries a text label as well as a pattern
-      expect(b.text.length).toBeGreaterThan(0)
-      expect(['onchain', 'opensea', 'modeled', 'simulated', 'protocol', 'none']).toContain(b.provenance)
+    // the status strip always says, in words, what is live and what is simulated
+    const strip = (await page.getByTestId('status-strip').textContent()) ?? ''
+    expect(strip).toMatch(/REAL DATA|ONCHAIN/i)
+    expect(strip).toMatch(/SIMULATED/i)
+
+    // and on the pages that carry provenance badges, each one has a text label
+    for (const view of ['liquidity', 'advance']) {
+      await page.getByTestId(`nav-${view}`).click()
+      await page.waitForTimeout(300)
+      const badges = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('.badge')).map((b) => ({
+          text: (b.textContent ?? '').trim(),
+          provenance: b.getAttribute('data-provenance'),
+        })),
+      )
+      expect(badges.length, `${view} badges`).toBeGreaterThan(0)
+      for (const b of badges) {
+        expect(b.text.length, `${view} badge with no text`).toBeGreaterThan(0)
+        if (b.provenance) {
+          expect(['onchain', 'opensea', 'modeled', 'simulated', 'protocol', 'none']).toContain(b.provenance)
+        }
+      }
     }
   })
 
@@ -126,11 +136,13 @@ test.describe('ACCESSIBILITY', () => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.goto('/')
     await page.getByTestId('try-demo').click()
-    const duration = await page
-      .locator('.stream-packet')
-      .first()
-      .evaluate((el) => getComputedStyle(el).animationDuration)
-    expect(parseFloat(duration)).toBeLessThan(0.01)
+    const durations = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('*'))
+        .map((el) => getComputedStyle(el).animationDuration)
+        .filter((d) => d && d !== '0s')
+        .map((d) => parseFloat(d)),
+    )
+    for (const d of durations) expect(d).toBeLessThan(0.01)
   })
 
   test('landmarks and a single h1 exist', async ({ page }) => {

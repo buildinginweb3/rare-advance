@@ -8,6 +8,7 @@ import { defineConfig, devices } from '@playwright/test'
 export default defineConfig({
   testDir: './e2e',
   // live.spec.ts hits the real network and only runs on explicit request
+  // unit tests live in tests/, Playwright specs in e2e/ — keep them separate
   testIgnore: [
     process.env.RA_VISUAL ? 'never-ignore-visual' : '**/visual.spec.ts',
     ...(process.env.RA_LIVE ? [] : ['**/live.spec.ts']),
