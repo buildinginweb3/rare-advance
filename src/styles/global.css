@@ -1920,3 +1920,43 @@ button {
 .details > summary::marker {
   color: var(--gray-2, #6b6b6b);
 }
+
+/* ---- wallet chooser: the thing you were told to choose, actually listed ---- */
+
+.wallet-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  min-height: 44px;
+  background: var(--paper);
+  color: var(--ink);
+  border: var(--line-thin) solid var(--ink);
+  cursor: pointer;
+}
+
+.wallet-option:hover,
+.wallet-option:focus-visible {
+  background: var(--ink);
+  color: var(--paper);
+  outline: none;
+}
+
+.wallet-option:hover .tiny,
+.wallet-option:focus-visible .tiny {
+  color: var(--paper);
+}
+
+.wallet-option-icon {
+  flex: none;
+  image-rendering: pixelated;
+}
+
+.wallet-option-name {
+  font-family: var(--font-pixel);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

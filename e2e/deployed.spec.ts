@@ -76,7 +76,10 @@ test.describe('PUBLIC DEPLOYMENT', () => {
     // No wallet is installed here, so the app must say exactly that rather than
     // spinning on "looking for a wallet" or implying a connection.
     const strip = page.getByTestId('status-strip')
-    await expect(strip).toContainText(/no browser wallet detected/i, { timeout: 30_000 })
+    // On the landing the answer appears beside the button, not in the strip below.
+    await expect(page.getByTestId('wallet-messages').first()).toContainText(/no browser wallet detected/i, {
+      timeout: 30_000,
+    })
     await expect(strip).toContainText(/TRY DEMO/i)
 
     // and the whole product still works with no wallet and no proxy at all

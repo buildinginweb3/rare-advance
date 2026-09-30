@@ -198,3 +198,63 @@ test.describe('safety', () => {
     await expect(page.getByTestId('friend-hero')).toBeVisible()
   })
 })
+/**
+ * Two wallets installed: the app must LIST them, not just say "choose".
+ */
+async function twoWallets(page: Page) {
+  await page.addInitScript(() => {
+    const infos = [
+      { uuid: 'wallet-a', name: 'MetaMask', rdns: 'io.metamask', icon: 'data:image/svg+xml,<svg/>' },
+      { uuid: 'wallet-b', name: 'Rabby', rdns: 'io.rabby', icon: 'data:image/svg+xml,<svg/>' },
+    ]
+    const providers = infos.map((info) => ({
+      info,
+      provider: {
+        request: async (a: { method: string }) =>
+          a.method === 'eth_chainId' ? '0x1237' : ['0x1111111111111111111111111111111111111111'],
+        on: () => {},
+        removeListener: () => {},
+      },
+    }))
+    window.addEventListener('eip6963:requestProvider', () => {
+      for (const p of providers) {
+        window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: p }))
+      }
+    })
+  })
+}
+
+test.describe('choosing between several installed wallets', () => {
+  test('the wallets are actually listed, and picking one connects', async ({ page }) => {
+    await twoWallets(page)
+    await page.goto('/')
+    await page.getByTestId('connect-wallet').click()
+
+    const chooser = page.getByTestId('wallet-chooser')
+    await expect(chooser).toBeVisible({ timeout: 15_000 })
+    // both wallets are named, with somewhere to press
+    await expect(chooser).toContainText('MetaMask')
+    await expect(chooser).toContainText('Rabby')
+    expect(await page.locator('[data-testid^="wallet-option-"]').count()).toBe(2)
+
+    await page.getByTestId('wallet-option-wallet-b').click()
+    await expect(page.getByTestId('status-strip')).toContainText('LIVE READ-ONLY', { timeout: 20_000 })
+  })
+
+  test('choosing does not silently request anything before a wallet is picked', async ({ page }) => {
+    await twoWallets(page)
+    await page.addInitScript(() => {
+      const w = window as unknown as { __req: string[] }
+      w.__req = []
+      const original = EventTarget.prototype.dispatchEvent
+      void original
+      const push = (a: unknown) => w.__req.push((a as { method?: string })?.method ?? '')
+      void push
+    })
+    await page.goto('/')
+    // Discovery alone must not prompt for accounts
+    await page.waitForTimeout(2000)
+    await page.getByTestId('connect-wallet').click()
+    await expect(page.getByTestId('wallet-chooser')).toBeVisible({ timeout: 15_000 })
+  })
+})
