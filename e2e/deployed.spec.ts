@@ -25,11 +25,12 @@ test.describe('PUBLIC DEPLOYMENT', () => {
     })
 
     await page.goto(`${BASE}/`)
-    await expect(page.getByRole('heading', { name: 'RARE ADVANCE' })).toBeVisible()
-    await expect(page.getByText('Your Friend is already earning.')).toBeVisible()
+    await expect(page.getByTestId('landing')).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('RARE ADVANCE')
+    await expect(page.getByText(/Your Friend is already earning/i)).toBeVisible()
 
     // Demo Mode must work on a static host with no server-side proxy
-    await enterDemo(page)
+    await enterDemo(page, `${BASE}/`)
     await expect(page.getByTestId('friend-hero')).toBeVisible()
 
     // 1. competing pool offers, internally consistent
@@ -92,7 +93,7 @@ test.describe('PUBLIC DEPLOYMENT', () => {
   test('the deployed demo has no horizontal overflow at 360px', async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 780 })
     await page.goto(`${BASE}/`)
-    await enterDemo(page)
+    await enterDemo(page, `${BASE}/`)
     for (const view of ['dashboard', 'advance', 'grow', 'liquidity', 'how']) {
       await page.getByTestId(`nav-${view}`).click()
       await page.waitForTimeout(120)

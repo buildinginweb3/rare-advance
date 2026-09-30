@@ -81,8 +81,12 @@ export async function freshMarket(page: Page) {
   })
 }
 
-export async function enterDemo(page: Page) {
-  await page.goto('/')
+/**
+ * `path` defaults to the local preview root. The deployment spec passes its own
+ * origin, because baseURL still points at localhost during that run.
+ */
+export async function enterDemo(page: Page, path = '/') {
+  await page.goto(path)
   await page.getByTestId('try-demo').click()
   await expect(page.getByTestId('friend-hero')).toBeVisible()
 }
