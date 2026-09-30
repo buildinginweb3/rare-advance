@@ -265,7 +265,8 @@ export function App() {
                         </a>
                       </li>
                       <li>ActivationManager.positions / earned / streams / totalWeight — read only</li>
-                      <li>OpenSea API v2 — artwork and traits only, never ownership or value</li>
+                      <li>NFT artwork — onchain tokenURI() SVG, the real protocol pixels</li>
+                      <li>OpenSea API v2 — secondary traits and canonical URL only, never ownership or value</li>
                       <li>Share formula: {REWARD_SHARE_FORMULA}</li>
                     </ul>
                   </div>

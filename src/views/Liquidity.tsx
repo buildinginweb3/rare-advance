@@ -74,15 +74,19 @@ export function LiquidityView() {
         </div>
         <div className="panel-recess" style={{ marginTop: 8 }}>
           <Stat
-            label="RF financed into Rare Friends actions"
+            label="RF financed into Rare Friends actions · pool lifetime"
             provenance="simulated"
             value={`${formatRF(state.pool.rfFinancedIntoActionsWei, 2)} RF`}
           />
           <Stat
-            label="Advances issued this pool"
+            label="Advances issued · pool lifetime"
             provenance="simulated"
             value={`${formatRF(state.pool.advancesIssuedWei, 2)} RF`}
           />
+          <div className="tiny muted" style={{ marginTop: 6 }}>
+            Pool-lifetime figures are the simulated starting state of the demo pool. The ECONOMIC INSIGHT
+            panel below totals only what happened in this browser session.
+          </div>
         </div>
       </Panel>
 
