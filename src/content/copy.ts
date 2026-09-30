@@ -8,25 +8,39 @@
 
 export const HERO_HEADLINE = 'Your Friend is already earning. Get your streaming $RAREFRIENDS early.'
 
-/** Exactly three steps. The landing teaches the product, not the machinery. */
-export const HERO_STEPS = [
-  {
-    title: 'YOUR FRIEND EARNS',
-    body: 'Rare Friends pay out RF and WETH rewards to active Friends, based on reward weight.',
-  },
-  {
-    title: 'CHOOSE HOW MUCH TO ADVANCE',
-    body: 'Take part of the RF that is already streaming, early.',
-  },
-  {
-    title: 'GET RF NOW, THE STREAM SETTLES LATER',
-    body: 'The rest arrives as the rewards vest. You can pay it off early whenever you like.',
-  },
-] as const
+/**
+ * What the platform actually does, in three columns. Both halves of the product
+ * are shipped, so neither is described as a promise.
+ */
+export const WHAT_IT_IS = {
+  title: 'WHAT RARE ADVANCE DOES',
+  lede:
+    'Rare Friends pay RF and WETH rewards to active Friends over seven days. Rare Advance sells that future stream to a holder today for less than it will be worth, and funds it from a pool of lenders who choose the terms. Two things can be financed: the stream itself, and the Friend actions that make it bigger.',
+  columns: [
+    {
+      title: '1 · YOUR FRIEND EARNS',
+      body: 'Rare Friends streams RF and WETH to active Friends for seven days, based on activation and reward weight.',
+      link: 'advance',
+    },
+    {
+      title: '2 · GET IT EARLY, OR GROW IT',
+      body: 'Take part of the stream now and let the rest settle later. Or finance activation, hardwiring, promotions and upgrades from the future rewards they create.',
+      link: 'grow',
+    },
+    {
+      title: '3 · LENDERS SET THE TERMS',
+      body: 'Liquidity providers fund advances and growth actions on their own terms. Holders compare every pool and choose.',
+      link: 'liquidity',
+    },
+  ],
+} as const
 
-/** One small teaser for the second idea. No model, no table, no numbers. */
-export const HERO_TEASER =
-  'Finance activation, hardwiring, promotions and upgrades from the future rewards they create.'
+export const NOT_A_LOAN_SHORT = [
+  'Not a loan. Nothing compounds and no interest accrues after you accept.',
+  'Not collateral. There is no LTV, no liquidation and no margin call.',
+  'Not a credit product. There is no repayment schedule and no credit score.',
+  'A sale of an already-streaming receivable, at a discount, that you may end early.',
+] as const
 
 export const HERO_SUBHEAD = ['Your Friend is already earning.', "Don't wait to get paid."]
 
@@ -51,7 +65,7 @@ export const NOT_A_LOAN = [
   'It is not a debt, not borrowing against an NFT floor, not collateral, not LTV, not liquidation.',
   'There is no monthly repayment, no credit score and no margin call.',
   'The selected Rare Friend’s stream is the financed asset.',
-]
+] as const
 
 export const HOW_IT_WORKS = [
   'RARE FRIENDS ACTIVITY',

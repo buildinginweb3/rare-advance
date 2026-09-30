@@ -8,9 +8,9 @@ import { HowView } from './views/HowItWorks'
 import { Badge, Notice } from './components/ui'
 import { useDispatch, useSession, type ViewId } from './session/store'
 import { useLiveData } from './session/useLiveData'
+import { loadDemoArtBatch } from './session/demoArt'
 import { useWallet } from './wallet/useWallet'
 import { ROBINHOOD_CHAIN } from './wallet/connect'
-import { DEMO_NOTE } from './content/copy'
 
 /**
  * NAVIGATION
@@ -39,11 +39,16 @@ export function App() {
   // Live mode follows the WALLET, not the button: it is entered once a wallet is
   // actually connected on the right chain. A visitor who has deliberately
   // chosen TRY DEMO is never pulled out of it.
+  const walletConnected =
+    wallet.state.status === 'connected' || wallet.state.status === 'wrong-network' ||
+    wallet.state.status === 'switch-unavailable'
+
   useEffect(() => {
-    if (wallet.usable && (state.view === 'landing' || !state.landed)) {
-      dispatch({ type: 'enter-live' })
-    }
-  }, [wallet.usable, state.view, state.landed, dispatch])
+    if (!walletConnected || (state.view !== 'landing' && state.landed)) return
+    // A wrong chain blocks LIVE DATA, not the product. Land on the demo Friends
+    // and let the status strip keep saying the data is not live.
+    dispatch({ type: wallet.usable ? 'enter-live' : 'land' })
+  }, [walletConnected, wallet.usable, state.view, state.landed, dispatch])
 
   const landed = state.landed && state.view !== 'landing'
   const liveAddress = !demo && wallet.usable ? wallet.state.address : null
@@ -62,6 +67,33 @@ export function App() {
   }, [liveAddress, live.result, live.error, dispatch])
 
   const friends = demo ? state.friends : (live.result?.friends ?? [])
+
+  // Demo Mode wears the REAL onchain portraits. Read once per session from the
+  // collection contracts (then cached), so a judge sees actual Rare Friends
+  // rather than drawn placeholders. Reward balances stay simulated.
+  const demoArtKey = demo ? friends.map((f) => `${f.collection}:${f.tokenId}`).join(',') : ''
+
+  useEffect(() => {
+    if (!demoArtKey) return
+    let cancelled = false
+    void loadDemoArtBatch(
+      demoArtKey.split(',').map((key) => {
+        const [collection, tokenId] = key.split(':') as ['Genesis' | 'Generations', string]
+        return { collection, tokenId }
+      }),
+    ).then((art) => {
+      if (cancelled || art.size === 0) return
+      dispatch({
+        type: 'apply-demo-art',
+        art: Object.fromEntries([...art].map(([key, a]) => [key, { imageUrl: a.imageUrl, name: a.name }])),
+      })
+    })
+    return () => {
+      cancelled = true
+    }
+    // Keyed on the token list, not on the array identity, so an unrelated store
+    // update cannot re-trigger a chain read.
+  }, [demoArtKey, dispatch])
 
   return (
     <div className="app">
@@ -163,65 +195,46 @@ function WalletStrip() {
   const liveFailed = !demo && state.live.status === 'error'
 
   return (
-    <div className="panel" data-testid="status-strip">
-      <div className="split-note">
-        <div className="split-note-col">
-          <span className="tiny h3" style={{ fontSize: 8 }}>
-            REAL DATA
-          </span>
-          <p className="tiny" style={{ margin: '3px 0 0' }}>
-            Friend ownership and supported Rare Friends protocol data are read-only from Robinhood Chain.
-          </p>
-        </div>
-        <div className="split-note-col">
-          <span className="tiny h3" style={{ fontSize: 8 }}>
-            SIMULATED
-          </span>
-          <p className="tiny" style={{ margin: '3px 0 0' }}>
-            Advances, liquidity, financing, settlement and Rare Advance burns. No real RF moves.
-          </p>
-        </div>
-      </div>
-
-      <div className="row" style={{ marginTop: 10, justifyContent: 'space-between' }}>
-        <div className="row-tight">
+    <div className="status-bar" data-testid="status-strip">
+      <div className="status-bar-row">
+        <Badge
+          provenance={demo ? 'simulated' : 'onchain'}
+          label={demo ? 'SIMULATED' : 'LIVE READ-ONLY'}
+        />
+        <span className="tiny status-bar-legend">
+          {demo
+            ? 'Artwork and protocol constants are read live from Robinhood Chain. Reward balances, advances, pools, financing and settlement are simulated.'
+            : 'Friend ownership and protocol data are read-only from Robinhood Chain. Rare Advance financing is simulated.'}
+        </span>
+        <span className="spacer" />
+        {!demo && wallet.state.address ? (
           <Badge
-            provenance={demo ? 'simulated' : 'onchain'}
-            label={demo ? 'SIMULATED DEMO' : 'LIVE READ-ONLY'}
-            large
+            provenance="onchain"
+            label={`${wallet.state.address.slice(0, 6)}\u2026${wallet.state.address.slice(-4)}`}
           />
-          {!demo && wallet.state.address ? (
-            <Badge provenance="onchain" label={`${wallet.state.address.slice(0, 6)}…${wallet.state.address.slice(-4)} · READ-ONLY`} />
-          ) : null}
-        </div>
-        <div className="row-tight">
-          <button
-            type="button"
-            className="btn btn-outline btn-sm"
-            onClick={() => dispatch({ type: 'enter-demo' })}
-            data-testid="strip-demo"
-          >
-            TRY DEMO
-          </button>
-          <WalletButton />
-        </div>
+        ) : null}
+        <button
+          type="button"
+          className="btn btn-outline btn-sm"
+          onClick={() => dispatch({ type: 'enter-demo' })}
+          data-testid="strip-demo"
+        >
+          TRY DEMO
+        </button>
+        <WalletButton />
       </div>
 
+      {/* Wallet problems matter in every mode: a rejection or a wrong network
+          must never be hidden just because the user is in Demo Mode. */}
       {liveFailed ? (
-        <Notice tone="warn" >
+        <Notice tone="warn">
           LIVE DATA UNAVAILABLE. {state.live.error ?? 'Robinhood Chain did not answer.'} Nothing on this
           screen is being read live right now.
         </Notice>
       ) : null}
-
-      <p className="tiny muted" style={{ margin: '8px 0 0' }}>
-        This demo never requests token or NFT approvals.
-      </p>
-
       {/* Wallet problems matter in every mode: a rejection or a wrong network
           must never be hidden just because the user is in Demo Mode. */}
       <WalletMessages />
-      {demo ? <Notice tone="warn">{DEMO_NOTE}</Notice> : null}
     </div>
   )
 }
@@ -269,7 +282,7 @@ function WalletButton() {
       }}
       data-testid="strip-connect"
     >
-      {wallet.providers.length === 0 ? 'NO WALLET · TRY DEMO' : 'CONNECT WALLET'}
+      CONNECT WALLET
     </button>
   )
 }

@@ -14,8 +14,9 @@ import { parseRF, parseWeight } from '../math/rf'
 import { deriveStreamingShare, streamRemainingMs } from '../chain/reads'
 import { DEMO_POOL_SEED } from '../economy/rareAdvanceConfig'
 import type { FriendPosition, LiveDataState } from '../types'
+import { cachedDemoArt } from './demoArt'
 
-export const DEMO_WALLET_LABEL = 'SIMULATED DEMO WALLET'
+export const DEMO_WALLET_LABEL = 'DEMO WALLET · REWARDS SIMULATED'
 export const DEMO_ADDRESS = '0xDEM0advance0000000000000000000000000000'
 
 /**
@@ -158,6 +159,7 @@ export function buildDemoLiveState(nowMs: number): LiveDataState {
 export function buildDemoFriends(nowMs: number): FriendPosition[] {
   const state = demoStreamState(nowMs)
   return DEMO_SPECS.map((spec) => {
+    const art = cachedDemoArt(spec.collection, spec.tokenId)
     const schedule = spec.generation >= 1 ? GENERATION_SCHEDULE[spec.generation - 1] : null
     const weight = !spec.activated
       ? 0n
@@ -176,13 +178,13 @@ export function buildDemoFriends(nowMs: number): FriendPosition[] {
       weightMicros: weight,
       weight: 'simulated' as const,
       walletAddress: null,
-      // Art is drawn on-device from a deterministic seed; the onchain artwork
-      // renderer is described in the caption rather than faked.
-      imageUrl: null,
-      artSource: 'none' as const,
+      // The REAL onchain portrait when we already have it cached, otherwise a
+      // drawn placeholder until the chain read lands. Never invented.
+      imageUrl: art?.imageUrl ?? null,
+      artSource: art ? ('onchain' as const) : ('none' as const),
       traits: [],
       canonicalUrl: null,
-      name: `${spec.collection} #${spec.tokenId}`,
+      name: art?.name ?? `${spec.collection} #${spec.tokenId}`,
       stateSource: 'simulated' as const,
       rewards: {
         claimableRfWei: parseRF(spec.claimableRf),

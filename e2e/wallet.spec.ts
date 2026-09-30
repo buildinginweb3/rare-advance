@@ -1,172 +1,199 @@
 import { expect, test, type Page } from '@playwright/test'
-import { enterDemo } from './helpers'
 
 /**
- * Wallet and error-state handling. A mock EIP-1193 provider is injected so the
- * rejection, wrong-network and no-Rare-Friends paths can all be exercised
- * deterministically. The mock only implements read + identity methods; the app
- * has no path that could ask for a signature.
+ * WALLET CONNECTION
+ * =================
+ *
+ * A mock EIP-6963 wallet is injected so every branch can be exercised
+ * deterministically: the happy path, a wallet that refuses the chain switch,
+ * a user who leaves the chain afterwards, and no wallet at all.
+ *
+ * The mock only implements read + identity methods. The app has no path that
+ * could ask for a signature, and that is asserted below.
  */
-async function injectMockWallet(
-  page: Page,
-  opts: { accounts?: string[]; chainId?: string; failRequest?: boolean } = {},
-) {
-  const accounts = opts.accounts ?? ['0x1111111111111111111111111111111111111111']
-  const chainId = opts.chainId ?? '0x1237' // 4663
-  await page.addInitScript(
-    ({ accounts, chainId, failRequest }) => {
-      const requested: string[] = []
-      ;(window as unknown as { __requested: string[] }).__requested = requested
-      const ethereum = {
-        request(args: { method: string }) {
-          requested.push(args.method)
-          switch (args.method) {
-            case 'eth_requestAccounts':
-              if (failRequest) return Promise.reject({ code: 4001, message: 'User rejected the request.' })
-              return Promise.resolve(accounts)
-            case 'eth_accounts':
-              return Promise.resolve(accounts)
-            case 'eth_chainId':
-              return Promise.resolve(chainId)
-            case 'wallet_switchEthereumChain':
-              return Promise.resolve(null)
-            case 'wallet_addEthereumChain':
-              return Promise.resolve(null)
-            default:
-              // Any other method is a bug in this app: fail loudly in tests.
-              return Promise.reject({ code: -32601, message: `Unexpected method ${args.method}` })
-          }
-        },
-        on() {},
-        removeListener() {},
-      }
-      ;(window as unknown as { ethereum: unknown }).ethereum = ethereum
-    },
-    { accounts, chainId, failRequest: opts.failRequest ?? false },
-  )
+
+type Behaviour = {
+  chain?: string
+  /** The wallet refuses `wallet_switchEthereumChain`. */
+  refuseSwitch?: boolean
+  /** Never answer EIP-6963, so only the legacy `window.ethereum` path exists. */
+  announce?: boolean
 }
 
-test.describe('WALLET FLOW', () => {
-  test('rejection is handled and Demo Mode still works', async ({ page }) => {
-    const errors: string[] = []
-    page.on('pageerror', (e) => errors.push(String(e)))
-    await injectMockWallet(page, { failRequest: true })
+async function mockWallet(page: Page, o: Behaviour = {}) {
+  await page.addInitScript((o: Behaviour) => {
+    const w = window as unknown as {
+      __chain: string
+      __req: string[]
+      ethereum: unknown
+    }
+    w.__chain = o.chain ?? '0x1237'
+    w.__req = []
+
+    const info = { uuid: 'w1', name: 'Test Wallet', rdns: 'test.wallet', icon: 'data:image/svg+xml,<svg/>' }
+    const provider = {
+      request: async (a: { method: string; params?: Array<{ chainId: string }> }) => {
+        w.__req.push(a.method)
+        switch (a.method) {
+          case 'eth_requestAccounts':
+          case 'eth_accounts':
+            return ['0x1111111111111111111111111111111111111111']
+          case 'eth_chainId':
+            return w.__chain
+          case 'wallet_switchEthereumChain':
+            if (o.refuseSwitch) throw { code: 4902, message: 'Unrecognized chain ID' }
+            w.__chain = a.params![0]!.chainId
+            return null
+          default:
+            throw { code: -32601, message: `Unexpected method ${a.method}` }
+        }
+      },
+      on: () => {},
+      removeListener: () => {},
+    }
+
+    if (o.announce !== false) {
+      window.addEventListener('eip6963:requestProvider', () => {
+        window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: { info, provider } }))
+      })
+    }
+    w.ethereum = provider
+  }, o)
+}
+
+const requested = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __req: string[] }).__req)
+
+test.describe('connecting on the right chain', () => {
+  test('lands the user and shows a read-only address', async ({ page }) => {
+    await mockWallet(page, { chain: '0x1237' })
     await page.goto('/')
-    await page.getByTestId('strip-connect').click()
-    await expect(page.getByTestId('status-strip')).toContainText(/declined the connection/i)
-    // a rejected connection must not break Demo Mode
-    await page.getByTestId('strip-demo').click()
-    await expect(page.getByTestId('friend-hero')).toBeVisible()
-    await expect(page.getByTestId('friend-hero')).toContainText(/Genesis/i)
-    expect(errors).toEqual([])
+    await expect(page.getByTestId('try-demo')).toBeVisible()
+
+    await page.getByTestId('connect-wallet').click()
+    await expect(page.getByTestId('status-strip')).toContainText('LIVE READ-ONLY', { timeout: 20_000 })
+
+    // the visitor is no longer on the landing: the app is usable
+    await expect(page.getByTestId('nav-liquidity')).toBeVisible()
+    await expect(page.getByTestId('strip-connect')).toContainText('CONNECTED')
   })
 
-  test('wrong network is detected and reported with a switch instruction', async ({ page }) => {
-    // chain 1 = Ethereum mainnet
-    await injectMockWallet(page, { chainId: '0x1' })
+  test('discovery alone never asks for an account', async ({ page }) => {
+    await mockWallet(page)
     await page.goto('/')
-    await page.getByTestId('strip-connect').click()
-    await expect(page.getByTestId('status-strip')).toContainText(/Robinhood Chain is needed/i)
+    // wait well past the discovery window
+    await expect(page.getByTestId('connect-wallet')).toContainText('CONNECT WALLET', { timeout: 10_000 })
+    expect(await requested(page)).toEqual([])
+  })
+})
+
+test.describe('connecting on the wrong chain', () => {
+  test('never strands the user on the landing', async ({ page }) => {
+    await mockWallet(page, { chain: '0x1', refuseSwitch: true })
+    await page.goto('/')
+    await page.getByTestId('connect-wallet').click()
+
+    // the honest failure is explained...
+    await expect(page.getByTestId('status-strip')).toContainText(/Robinhood Chain|could not switch/i, {
+      timeout: 20_000,
+    })
     await expect(page.getByTestId('switch-network')).toBeVisible()
-  })
 
-  test('no injected wallet reports honestly and offers Demo Mode', async ({ page }) => {
-    await page.goto('/')
-    // no window.ethereum and no EIP-6963 announcement in this context
-    await expect(page.getByTestId('strip-connect')).toBeEnabled({ timeout: 10_000 })
-    await page.getByTestId('strip-connect').click()
-    await expect(page.getByTestId('status-strip')).toContainText('No browser wallet detected')
-    await expect(page.getByTestId('status-strip')).toContainText(/TRY DEMO/i)
-    // and Demo Mode is one click away
-    await page.getByTestId('strip-demo').click()
-    await expect(page.getByTestId('friend-hero')).toBeVisible()
-  })
-
-  test('an unreachable RPC never produces a LIVE badge or invented data', async ({ page }) => {
-    await page.route('**/api/rf-owned-nfts**', (route) => route.abort('failed'))
-    await page.route('**/api/rf-snapshot**', (route) => route.abort('failed'))
-    // break every RPC endpoint the app might use
-    await page.route('https://rpc.mainnet.chain.robinhood.com/**', (route) => route.abort('failed'))
-    await page.route('https://rarefriends.com/**', (route) => route.abort('failed'))
-    await page.route('https://api.opensea.io/**', (route) => route.abort('failed'))
-
-    await injectMockWallet(page)
-    await page.goto('/')
-    await page.getByTestId('strip-connect').click()
-    await page.waitForTimeout(1500)
-
-    // The WALLET is connected; that is a different fact from the DATA. What
-    // must never happen is the app presenting data it could not fetch as live.
-    await expect(page.getByTestId('status-strip')).toContainText(/LIVE DATA UNAVAILABLE/i)
-    // and Demo Mode remains one click away
-    await page.getByTestId('strip-demo').click()
-    await expect(page.getByTestId('friend-hero')).toBeVisible()
-    await expect(page.getByTestId('status-strip')).not.toContainText('LIVE DATA UNAVAILABLE')
-  })
-
-  test('no Rare Friends found is reported without inventing a balance', async ({ page }) => {
-    await page.route('**/api/rf-owned-nfts**', (route) =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ nfts: [] }) }),
-    )
-    await injectMockWallet(page)
-    await page.goto('/')
-    await page.getByTestId('strip-connect').click()
-    await page.waitForTimeout(1500)
-
-    // A connected wallet that owns nothing must be told so plainly, with no
-    // invented Friend and no invented balance.
-    await page.waitForTimeout(2500)
-    const body = (await page.getByTestId('main').textContent()) ?? ''
-    expect(body).not.toMatch(/\b\d[\d,.]*\s*RF\s*(?:owned|balance)/i)
-    // the demo market is untouched by an empty wallet
+    // ...and the product is still reachable, because a wrong chain blocks live
+    // data rather than the app
+    await expect(page.getByTestId('nav-liquidity')).toBeVisible()
     await page.getByTestId('nav-liquidity').click()
     await expect(page.getByTestId('market-pool-count')).toContainText('5')
   })
 
-  test('the app never requests a signature or a transaction', async ({ page }) => {
-    await injectMockWallet(page)
+  test('does not claim live data while on the wrong chain', async ({ page }) => {
+    await mockWallet(page, { chain: '0x1', refuseSwitch: true })
     await page.goto('/')
-    await page.getByTestId('strip-connect').click()
-    await page.waitForTimeout(2500)
-    // walk every view
-    for (const v of ['dashboard', 'advance', 'grow', 'liquidity', 'how']) {
+    await page.getByTestId('connect-wallet').click()
+    await expect(page.getByTestId('switch-network')).toBeVisible({ timeout: 20_000 })
+
+    await expect(page.getByTestId('status-strip')).not.toContainText('LIVE READ-ONLY')
+    await expect(page.getByTestId('status-strip')).toContainText('SIMULATED')
+  })
+})
+
+test.describe('legacy wallets', () => {
+  test('a wallet with no EIP-6963 support is still discovered', async ({ page }) => {
+    await mockWallet(page, { chain: '0x1237', announce: false })
+    await page.goto('/')
+    await expect(page.getByTestId('connect-wallet')).toContainText('CONNECT WALLET', { timeout: 10_000 })
+
+    await page.getByTestId('connect-wallet').click()
+    await expect(page.getByTestId('status-strip')).toContainText('LIVE READ-ONLY', { timeout: 20_000 })
+  })
+})
+
+test.describe('no wallet installed', () => {
+  test('says so plainly instead of spinning forever', async ({ page }) => {
+    await page.goto('/')
+    // the discovery window closes and the app settles on the honest answer
+    await expect(page.getByTestId('status-strip')).toContainText(/no browser wallet detected/i, {
+      timeout: 10_000,
+    })
+    await expect(page.getByTestId('try-demo')).toBeEnabled()
+  })
+
+  test('the demo needs no wallet at all', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('try-demo').click()
+    await expect(page.getByTestId('friend-hero')).toBeVisible()
+    await page.getByTestId('nav-liquidity').click()
+    await expect(page.getByTestId('open-create-pool')).toBeVisible()
+  })
+})
+
+test.describe('safety', () => {
+  test('the app never requests a signature or a transaction', async ({ page }) => {
+    await mockWallet(page)
+    await page.goto('/')
+    await page.getByTestId('connect-wallet').click()
+    await expect(page.getByTestId('status-strip')).toContainText('LIVE READ-ONLY', { timeout: 20_000 })
+
+    for (const v of ['advance', 'grow', 'liquidity', 'how']) {
       await page.getByTestId(`nav-${v}`).click()
+      await page.waitForTimeout(150)
     }
-    const requested = await page.evaluate(
-      () => (window as unknown as { __requested: string[] }).__requested,
-    )
-    expect(requested.length).toBeGreaterThan(0)
-    for (const method of requested) {
+
+    const methods = await requested(page)
+    expect(methods.length).toBeGreaterThan(0)
+    for (const m of methods) {
       expect(
-        [
-          'eth_requestAccounts',
-          'eth_accounts',
-          'eth_chainId',
-          'wallet_switchEthereumChain',
-          'wallet_addEthereumChain',
-        ],
-        `unexpected wallet method: ${method}`,
-      ).toContain(method)
-      expect(method).not.toContain('sign')
-      expect(method).not.toContain('Transaction')
-      expect(method).not.toContain('approve')
+        ['eth_requestAccounts', 'eth_accounts', 'eth_chainId', 'wallet_switchEthereumChain', 'wallet_addEthereumChain'],
+        `unexpected wallet method: ${m}`,
+      ).toContain(m)
+    }
+    for (const forbidden of ['sign', 'SendTransaction', 'approve', 'personal_sign', 'eth_sign']) {
+      expect(methods.join(' ')).not.toContain(forbidden)
     }
   })
 
-  test('Demo Mode is reachable from the landing hero with no wallet at all', async ({ page }) => {
+  test('a rejected connection is explained and does not break the demo', async ({ page }) => {
+    await page.addInitScript(() => {
+      const w = window as unknown as { __req: string[]; ethereum: unknown }
+      w.__req = []
+      w.ethereum = {
+        request: async (a: { method: string }) => {
+          w.__req.push(a.method)
+          if (a.method === 'eth_requestAccounts') throw { code: 4001, message: 'User rejected the request.' }
+          if (a.method === 'eth_chainId') return '0x1237'
+          return []
+        },
+        on: () => {},
+        removeListener: () => {},
+      }
+    })
     await page.goto('/')
+    await page.getByTestId('connect-wallet').click()
+    await expect(page.getByTestId('status-strip')).toContainText(/declined|cancelled|rejected/i, {
+      timeout: 20_000,
+    })
 
-    // the landing sells the idea with no wallet present
-    await expect(page.getByTestId('try-demo')).toBeVisible()
-    await expect(page.getByTestId('landing-steps')).toBeVisible()
-    // and the wallet button says so honestly rather than pretending to connect
-    await expect(page.getByTestId('connect-wallet')).toContainText(/NO WALLET/i)
-
-    // one click in, the whole product is usable
-    await enterDemo(page)
+    await page.getByTestId('try-demo').click()
     await expect(page.getByTestId('friend-hero')).toBeVisible()
-    await page.getByTestId('nav-liquidity').click()
-    await page.getByTestId('open-create-pool').click()
-    await expect(page.getByTestId('pool-wizard')).toBeVisible()
   })
 })

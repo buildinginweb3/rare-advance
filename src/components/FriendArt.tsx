@@ -68,7 +68,7 @@ export function FriendArt({
             <PlaceholderFace seed={friend.key} size={Math.min(size - 16, 72)} />
           </div>
           <span className="tiny muted" style={{ maxWidth: 130 }}>
-            Placeholder · not the onchain artwork
+            Portrait unavailable · not the onchain artwork
           </span>
         </div>
       ) : (

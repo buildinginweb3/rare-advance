@@ -12,7 +12,7 @@
 import { Device } from '../components/Device'
 import { useDispatch, useSession, selectedFriend, sessionNowMs } from '../session/store'
 import { useWallet } from '../wallet/useWallet'
-import { HERO_HEADLINE, HERO_STEPS, HERO_TEASER } from '../content/copy'
+import { HERO_HEADLINE, NOT_A_LOAN_SHORT, WHAT_IT_IS } from '../content/copy'
 
 export function LandingView() {
   const state = useSession()
@@ -50,7 +50,7 @@ export function LandingView() {
               }}
               data-testid="connect-wallet"
             >
-              {wallet.providers.length === 0 ? 'NO WALLET · TRY THE DEMO' : 'CONNECT WALLET'}
+              CONNECT WALLET
             </button>
           </div>
         </div>
@@ -67,45 +67,48 @@ export function LandingView() {
         </div>
       </section>
 
-      <section aria-label="How it works in three steps">
-        <ol className="steps" data-testid="landing-steps">
-          {HERO_STEPS.map((s, i) => (
-            <li key={s.title} className="step">
-              <span className="step-num" aria-hidden="true">
-                {i + 1}
-              </span>
-              <span>
-                <span className="h3" style={{ fontSize: 9 }}>
-                  {s.title}
-                </span>
-                <span className="tiny" style={{ display: 'block', marginTop: 4 }}>
-                  {s.body}
-                </span>
-              </span>
-            </li>
-          ))}
-        </ol>
-      </section>
+      <section className="what" data-testid="what-it-does">
+        <h2 className="h2" style={{ fontSize: 11 }}>
+          {WHAT_IT_IS.title}
+        </h2>
+        <p className="tiny" style={{ maxWidth: 760, margin: '8px 0 0' }}>
+          {WHAT_IT_IS.lede}
+        </p>
 
-      <section className="teaser" data-testid="landing-teaser">
-        <div>
-          <div className="h3" style={{ fontSize: 9 }}>
-            COMING NEXT
-          </div>
-          <p className="tiny" style={{ margin: '4px 0 0', maxWidth: 420 }}>
-            {HERO_TEASER}
-          </p>
+        <div className="what-grid">
+          {WHAT_IT_IS.columns.map((col) => (
+            <article key={col.title} className="what-card">
+              <h3 className="h3" style={{ fontSize: 9 }}>
+                {col.title}
+              </h3>
+              <p className="tiny" style={{ margin: '6px 0 10px' }}>
+                {col.body}
+              </p>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => {
+                  dispatch({ type: 'enter-demo' })
+                  dispatch({ type: 'set-view', view: col.link })
+                }}
+                data-testid={`what-go-${col.link}`}
+              >
+                {col.link}
+              </button>
+            </article>
+          ))}
         </div>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => {
-            dispatch({ type: 'enter-demo' })
-          }}
-          data-testid="see-grow"
-        >
-          SEE GROW
-        </button>
+
+        <div className="not-a-loan" data-testid="not-a-loan">
+          <div className="h3" style={{ fontSize: 9 }}>
+            WHAT THIS IS NOT
+          </div>
+          <ul className="tiny" style={{ margin: '6px 0 0', paddingLeft: 16, lineHeight: 1.9 }}>
+            {NOT_A_LOAN_SHORT.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
       </section>
 
       <span hidden>{nowMs}</span>

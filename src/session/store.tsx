@@ -90,6 +90,7 @@ export type SessionAction =
   | { type: 'set-view'; view: ViewId }
   | { type: 'select-friend'; key: string }
   | { type: 'set-friends'; friends: FriendPosition[] }
+  | { type: 'apply-demo-art'; art: Record<string, { imageUrl: string; name: string }> }
   | { type: 'set-live'; live: LiveDataState }
   | { type: 'set-live-error'; error: string }
   | { type: 'take-advance'; friendKey: string; faceValueWei: bigint; durationMs: bigint }
@@ -160,6 +161,20 @@ export function reducer(state: SessionState, action: SessionAction): SessionStat
         friends: action.friends,
         selectedFriendKey: keepCurrent ? state.selectedFriendKey : (earning?.key ?? null),
       }
+    }
+
+    case 'apply-demo-art': {
+      // Real portraits arriving late must never disturb the selection or the
+      // simulated reward state: only the art fields are touched.
+      if (Object.keys(action.art).length === 0) return state
+      let changed = false
+      const friends = state.friends.map((f) => {
+        const art = action.art[`${f.collection}:${f.tokenId}`]
+        if (!art || f.imageUrl === art.imageUrl) return f
+        changed = true
+        return { ...f, imageUrl: art.imageUrl, name: art.name, artSource: 'onchain' as const }
+      })
+      return changed ? { ...state, friends } : state
     }
 
     case 'set-live':

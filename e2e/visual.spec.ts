@@ -34,8 +34,10 @@ for (const vp of VIEWPORTS) {
       await page.goto('/')
       await step('01-landing')
 
-      // 02 the holder home, one Friend and one next step
+      // 02 the holder home, one Friend and one next step. Wait for the real
+      // onchain portrait, so the capture shows what a visitor really sees.
       await page.getByTestId('try-demo').click()
+      await page.getByTestId('friend-hero').locator('img').first().waitFor({ timeout: 45_000 })
       await step('02-home')
 
       // 03 the Friend switcher

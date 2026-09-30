@@ -58,13 +58,13 @@ function uriReader() {
  */
 function decodeMetadata(uri: string): { name?: string; image?: string } | null {
   try {
+    if (uri.startsWith('{')) {
+      const json = JSON.parse(uri) as { name?: string; image?: string }
+      return { name: json.name, image: json.image }
+    }
     if (uri.startsWith('data:application/json')) {
       const b64 = uri.slice(uri.indexOf(',') + 1)
       const json = JSON.parse(atob(b64)) as { name?: string; image?: string }
-      return { name: json.name, image: json.image }
-    }
-    if (uri.startsWith('{')) {
-      const json = JSON.parse(uri) as { name?: string; image?: string }
       return { name: json.name, image: json.image }
     }
     if (uri.startsWith('data:image') || uri.startsWith('https://') || uri.startsWith('ipfs://')) {
@@ -81,7 +81,9 @@ function usableImageUrl(image: string | undefined): string | null {
   if (!image) return null
   if (image.startsWith('data:image')) return image
   if (image.startsWith('https://')) return image
-  return null // ipfs:// and anything else is not resolvable without a gateway
+  // Rare Friends ships its artwork as an inline data URI, so this is the normal
+  // case. ipfs:// and anything else is not resolvable without a gateway.
+  return null
 }
 
 export function tokenIdOf(id: string): bigint {

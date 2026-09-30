@@ -7,11 +7,15 @@
  */
 
 import { expect, test, type Page } from '@playwright/test'
-import { watch } from './helpers'
+import { freshMarket, watch } from './helpers'
 
 const DAY = 86_400_000
 
-test.beforeEach(() => {})
+// Pools and portraits persist in localStorage, so each test must start from the
+// seeded market or the totals leak between them.
+test.beforeEach(async ({ page }) => {
+  await freshMarket(page)
+})
 
 /** Parse "8,432.45 RF" into a Number. Fails loudly on anything unparseable. */
 function rf(text: string): number {
@@ -73,7 +77,7 @@ test.describe('FLOW 1 — join a pool with simulated RF', () => {
     await expect(page.getByTestId('market-available')).toContainText('269,000 RF')
 
     w.expectClean()
-    w.expectNoExternalRequests()
+    w.expectNoThirdPartyRequests()
   })
 
   test('withdraw returns the available balance and refuses to overspend deployed RF', async ({ page }) => {
@@ -150,7 +154,7 @@ test.describe('FLOW 2 — create a communal pool', () => {
     await expect(page.getByTestId('market-available')).toContainText('364,000 RF')
 
     w.expectClean()
-    w.expectNoExternalRequests()
+    w.expectNoThirdPartyRequests()
   })
 
   test('terms are editable while solo, then lock the moment another lender joins', async ({ page }) => {
@@ -467,16 +471,21 @@ test.describe('honesty guards', () => {
   })
 })
 
-test.describe('Demo Mode makes no external requests at all', () => {
-  test('a full walk touches no third party', async ({ page }) => {
+test.describe('Demo Mode talks to no third party', () => {
+  test('a full walk contacts only the public Robinhood Chain RPC', async ({ page }) => {
     const w = watch(page)
     await page.goto('/')
     await page.getByTestId('try-demo').click()
+    // let the real artwork read finish
+    await expect(page.getByTestId('friend-hero').locator('img').first()).toBeVisible({ timeout: 45_000 })
+
     for (const view of ['advance', 'grow', 'liquidity', 'how']) {
       await page.getByTestId(`nav-${view}`).click()
       await page.waitForTimeout(200)
     }
-    expect(w.externalRequests, w.externalRequests.join(' | ')).toEqual([])
+
+    const offenders = w.forbiddenRequests()
+    expect(offenders, offenders.join(' | ')).toEqual([])
     w.expectClean()
   })
 })
@@ -509,5 +518,80 @@ test.describe('simulated time', () => {
 
     w.expectClean()
     void DAY
+  })
+})
+test.describe('the landing explains the platform', () => {
+  test('says what it does and never promises Grow as a future feature', async ({ page }) => {
+    const w = watch(page)
+    await page.goto('/')
+
+    const what = page.getByTestId('what-it-does')
+    await expect(what).toBeVisible()
+    // both halves of the product are described as shipped, not upcoming
+    await expect(what).toContainText(/WHAT RARE ADVANCE DOES/i)
+    await expect(what).toContainText(/Liquidity providers/i)
+
+    // the honest framing a lender is owed
+    await expect(page.getByTestId('not-a-loan')).toContainText(/Not a loan/i)
+    await expect(page.getByTestId('not-a-loan')).toContainText(/Not collateral/i)
+
+    // nothing anywhere claims Grow is still to come
+    const body = (await page.locator('body').textContent()) ?? ''
+    expect(body).not.toMatch(/COMING NEXT/i)
+    expect(body).not.toMatch(/coming soon/i)
+
+    w.expectClean()
+  })
+
+  test('each explanation column jumps to the screen it describes', async ({ page }) => {
+    await page.goto('/')
+    for (const [testId, view] of [
+      ['what-go-advance', 'nav-advance'],
+      ['what-go-grow', 'nav-grow'],
+      ['what-go-liquidity', 'nav-liquidity'],
+    ] as const) {
+      await page.getByTestId(testId).click()
+      await expect(page.getByTestId(view)).toBeVisible()
+      expect(await page.getByTestId(testId).count()).toBe(0)
+      await page.goto('/')
+    }
+  })
+})
+
+test.describe('the demo Friend is a real Rare Friend', () => {
+  test('wears its real onchain portrait, not a drawn placeholder', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('try-demo').click()
+
+    // the portrait is read from the collection contract on first visit
+    const img = page.getByTestId('friend-hero').locator('img').first()
+    await expect(img).toBeVisible({ timeout: 45_000 })
+
+    const src = await img.getAttribute('src')
+    expect(src, 'portrait must come from the chain').toMatch(/^data:image\/svg\+xml;base64,/)
+    // and it actually decodes into an image
+    expect(await img.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
+
+    // the honest caption is only shown when the real thing could not be read
+    await expect(page.getByText(/Portrait unavailable/i)).toHaveCount(0)
+  })
+
+  test('still works with no network at all, from the cached portraits', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('try-demo').click()
+    await expect(page.getByTestId('friend-hero').locator('img').first()).toBeVisible({ timeout: 45_000 })
+
+    // Cut off the chain. The app must still start and still show real portraits,
+    // because the portraits are cached.
+    await page.route('**/rpc.mainnet.chain.robinhood.com/**', (route) => route.abort('failed'))
+    await page.reload()
+    await page.getByTestId('try-demo').click()
+
+    const img = page.getByTestId('friend-hero').locator('img').first()
+    await expect(img).toBeVisible({ timeout: 20_000 })
+    expect(await img.getAttribute('src')).toMatch(/^data:image\/svg\+xml;base64,/)
+    // and the rest of the product still works with no chain at all
+    await page.getByTestId('nav-liquidity').click()
+    await expect(page.getByTestId('market-pool-count')).toContainText('5')
   })
 })

@@ -68,10 +68,13 @@ for (const width of MOBILE_WIDTHS) {
     test('provenance badges are readable, not clipped', async ({ page }) => {
       await page.goto('/')
       await page.getByTestId('try-demo').click()
-      const badge = page.getByText('SIMULATED DEMO WALLET').first()
-      await expect(badge).toBeVisible()
-      const overflow = await badge.evaluate((el) => el.scrollWidth > el.clientWidth + 1)
-      expect(overflow).toBe(false)
+      // The Friend card labels its state in words, not only in colour.
+      const labels = page.getByTestId('friend-hero').locator('.tag')
+      await expect(labels.first()).toBeVisible()
+      for (const label of await labels.all()) {
+        expect((await label.textContent())?.trim().length, 'a state label must have words').toBeGreaterThan(0)
+        expect(await label.evaluate((el) => el.scrollWidth > el.clientWidth + 1)).toBe(false)
+      }
     })
   })
 }
@@ -109,8 +112,8 @@ test.describe('ACCESSIBILITY', () => {
     await page.getByTestId('try-demo').click()
     // the status strip always says, in words, what is live and what is simulated
     const strip = (await page.getByTestId('status-strip').textContent()) ?? ''
-    expect(strip).toMatch(/REAL DATA|ONCHAIN/i)
-    expect(strip).toMatch(/SIMULATED/i)
+    expect(strip, 'the strip must say what is live').toMatch(/Robinhood Chain/i)
+    expect(strip, 'the strip must say what is simulated').toMatch(/simulated/i)
 
     // and on the pages that carry provenance badges, each one has a text label
     for (const view of ['liquidity', 'advance']) {

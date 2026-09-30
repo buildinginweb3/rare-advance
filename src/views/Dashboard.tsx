@@ -135,39 +135,40 @@ export function DashboardView() {
               </div>
             </div>
 
-            <div className="sticky-cta">
+            <div className="money-actions">
               {hasOpenPosition ? (
                 <button
                   type="button"
-                  className="btn btn-block cta-bar-btn"
+                  className="btn btn-block"
                   onClick={() => dispatch({ type: 'set-view', view: 'advance' })}
                   data-testid="home-primary"
                 >
-                  VIEW YOUR ACTIVE ADVANCE
+                  MANAGE YOUR ACTIVE ADVANCE
                 </button>
               ) : streaming !== null && streaming > 0n ? (
                 <button
                   type="button"
-                  className="btn btn-block cta-bar-btn"
+                  className="btn btn-block"
                   onClick={() => dispatch({ type: 'set-view', view: 'advance' })}
                   data-testid="home-primary"
                 >
-                  GET RF EARLY
+                  GET THIS STREAM EARLY
                 </button>
               ) : (
                 <button
                   type="button"
-                  className="btn btn-block cta-bar-btn"
+                  className="btn btn-block"
                   onClick={() => dispatch({ type: 'set-view', view: 'grow' })}
                   data-testid="home-primary"
                 >
-                  EXPLORE GROWTH
+                  FINANCE YOUR FRIEND'S GROWTH
                 </button>
               )}
             </div>
             {streaming !== null && streaming > 0n ? (
               <p className="tiny muted" style={{ marginTop: 6, marginBottom: 0 }}>
-                This is a simulated advance against RF your Friend has already earned. It is not a loan.
+                Taking it early means giving up part of it. You can end the arrangement at any time and only
+                pay the premium earned so far.
               </p>
             ) : null}
           </Panel>
