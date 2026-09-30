@@ -72,16 +72,21 @@ test.describe('PUBLIC DEPLOYMENT', () => {
 
   test('the deployed demo degrades honestly with no proxy and no wallet', async ({ page }) => {
     await page.goto(`${BASE}/`)
-    // There is no server-side proxy on a static host, so the first-party index
-    // path fails. That must produce an honest error with Retry + Demo Mode, and
-    // the onchain Genesis sweep must still work where it can.
-    await page.getByTestId('strip-connect').click()
+    // No wallet is installed here, so the app must say exactly that rather than
+    // spinning on "looking for a wallet" or implying a connection.
     const strip = page.getByTestId('status-strip')
-    await expect(strip).toContainText(/no eip-1193|not on robinhood|unavailable|unreachable|no rare friends/i, {
-      timeout: 90_000,
-    })
+    await expect(strip).toContainText(/no browser wallet detected/i, { timeout: 30_000 })
+    await expect(strip).toContainText(/TRY DEMO/i)
+
+    // and the whole product still works with no wallet and no proxy at all
     await page.getByTestId('strip-demo').click()
-    await expect(page.getByTestId('friend-card-Genesis:500')).toBeVisible()
+    await expect(page.getByTestId('friend-hero')).toBeVisible()
+    await page.getByTestId('nav-liquidity').click()
+    await expect(page.getByTestId('market-pool-count')).toContainText('5')
+    await page.getByTestId('pool-row-pool-default').click()
+    await page.getByTestId('contribute-custom').fill('25000')
+    await page.getByTestId('contribute-submit').click()
+    await expect(page.getByTestId('lp-table')).toContainText('25,000')
   })
 
   test('the deployed demo has no horizontal overflow at 360px', async ({ page }) => {
