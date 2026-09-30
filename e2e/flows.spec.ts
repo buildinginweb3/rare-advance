@@ -74,7 +74,7 @@ test.describe('FLOW 1 — join a pool with simulated RF', () => {
     await expect(table).toContainText('You')
     await expect(table).toContainText('25,000')
     // and the market grew by exactly that much
-    await expect(page.getByTestId('market-available')).toContainText('269,000 RF')
+    await expect(page.getByTestId('market-available')).toContainText('469,000 RF')
 
     w.expectClean()
     w.expectNoThirdPartyRequests()
@@ -99,7 +99,7 @@ test.describe('FLOW 1 — join a pool with simulated RF', () => {
     // back to the market list, and the deposit is gone
     await page.getByTestId('close-pool-detail').click()
     await page.waitForTimeout(300)
-    await expect(page.getByTestId('market-available')).toContainText('244,000 RF')
+    await expect(page.getByTestId('market-available')).toContainText('444,000 RF')
     w.expectClean()
   })
 })
@@ -151,7 +151,7 @@ test.describe('FLOW 2 — create a communal pool', () => {
     await expect(mine).toBeVisible()
     await expect(mine).toContainText('My Neighbourhood Pool')
     await expect(page.getByTestId('market-pool-count')).toContainText('6')
-    await expect(page.getByTestId('market-available')).toContainText('364,000 RF')
+    await expect(page.getByTestId('market-available')).toContainText('564,000 RF')
 
     w.expectClean()
     w.expectNoThirdPartyRequests()
@@ -736,5 +736,85 @@ test.describe('the demo wallet holds a Genesis and a Generation', () => {
     const drawer = page.getByTestId('friend-switcher')
     await expect(drawer.locator('[data-testid^="switcher-Genesis:"]')).not.toHaveCount(0)
     await expect(drawer.locator('[data-testid^="switcher-Generations:"]')).not.toHaveCount(0)
+  })
+})
+
+test.describe('Grow financing is reachable at every contribution', () => {
+  /** Every contribution the UI actually offers. */
+  const PCT = ['0', '25', '50', '100']
+
+  test('0% and 100% are explained, and 0% still finds lenders', async ({ page }) => {
+    const w = watch(page)
+    await page.goto('/')
+    await page.getByTestId('try-demo').click()
+    await page.getByTestId('nav-grow').click()
+    await page.waitForTimeout(400)
+
+    for (const id of await page.locator('[data-testid^="explore-financing-"]').evaluateAll((n) =>
+      n.map((x) => x.getAttribute('data-testid')!),
+    )) {
+      await page.getByTestId(id).click()
+      await page.waitForTimeout(300)
+      const sheet = () => page.getByTestId('finance-sheet').innerText()
+
+      // 0% means the lender funds everything. That must be fundable.
+      await page.getByTestId('contribute-0').click()
+      await page.waitForTimeout(300)
+      expect(
+        await page.getByTestId('growth-offers').locator('> button').count(),
+        `${id} at 0% must have lenders`,
+      ).toBeGreaterThan(0)
+
+      // 100% means there is nothing left to finance, and we say so plainly.
+      await page.getByTestId('contribute-100').click()
+      await page.waitForTimeout(300)
+      await expect(page.getByTestId('finance-sheet')).toContainText(/nothing left to finance/i)
+      await expect(page.getByTestId('growth-offers')).toHaveCount(0)
+
+      // and every middle step offers something
+      for (const p of PCT.filter((x) => x !== '0' && x !== '100')) {
+        await page.getByTestId(`contribute-${p}`).click()
+        await page.waitForTimeout(300)
+        expect(
+          await page.getByTestId('growth-offers').locator('> button').count(),
+          `${id} at ${p}% must have lenders`,
+        ).toBeGreaterThan(0)
+      }
+      void sheet
+    }
+    w.expectClean()
+  })
+
+  test('a promotion is actually financeable, not just an upgrade', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('try-demo').click()
+    await page.getByTestId('nav-grow').click()
+    await page.waitForTimeout(400)
+    await page.getByTestId('explore-financing-promote').click()
+    await page.waitForTimeout(300)
+    expect(await page.getByTestId('growth-offers').locator('> button').count()).toBeGreaterThan(0)
+    await expect(page.getByTestId('finance-sheet')).toContainText(/WETH SHARE/i)
+  })
+})
+
+test.describe('Grow lets you choose the Friend', () => {
+  test('switching from Grow changes what can be financed', async ({ page }) => {
+    const w = watch(page)
+    await page.goto('/')
+    await page.getByTestId('try-demo').click()
+    await page.getByTestId('nav-grow').click()
+    await page.waitForTimeout(400)
+    expect(await page.locator('[data-testid^="explore-financing-"]').count()).toBeGreaterThan(0)
+
+    await page.getByTestId('open-friend-switcher').click()
+    await page.waitForTimeout(300)
+    await expect(page.getByTestId('friend-switcher')).toBeVisible()
+    await page.locator('[data-testid^="switcher-Genesis:"]').first().click()
+    await page.waitForTimeout(400)
+
+    // Genesis is fully weighted, so Grow now says so instead of showing nothing
+    await expect(page.getByTestId('main')).toContainText(/fully weighted/i)
+    expect(await page.locator('[data-testid^="explore-financing-"]').count()).toBe(0)
+    w.expectClean()
   })
 })

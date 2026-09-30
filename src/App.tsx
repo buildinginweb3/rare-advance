@@ -157,7 +157,8 @@ export function App() {
             {state.view === 'grow' ? <GrowView /> : null}
             {state.view === 'liquidity' ? <LiquidityView /> : null}
             {state.view === 'how' ? <HowView /> : null}
-            {!landed ? <WalletStrip /> : null}
+            {/* The landing shows wallet feedback inline beside its own button. */}
+            {!landed ? <WalletStrip hideWalletMessages /> : null}
 
           </div>
         </div>
@@ -185,7 +186,7 @@ export function App() {
  * A single global explanation of live vs simulated, plus the wallet control.
  * Provenance is available on individual numbers; it is not repeated everywhere.
  */
-function WalletStrip() {
+function WalletStrip({ hideWalletMessages = false }: { hideWalletMessages?: boolean }) {
   const state = useSession()
   const dispatch = useDispatch()
   const wallet = useWallet()
@@ -234,7 +235,7 @@ function WalletStrip() {
       ) : null}
       {/* Wallet problems matter in every mode: a rejection or a wrong network
           must never be hidden just because the user is in Demo Mode. */}
-      <WalletMessages />
+      {!hideWalletMessages ? <WalletMessages /> : null}
     </div>
   )
 }

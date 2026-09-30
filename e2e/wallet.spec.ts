@@ -132,7 +132,8 @@ test.describe('no wallet installed', () => {
   test('says so plainly instead of spinning forever', async ({ page }) => {
     await page.goto('/')
     // the discovery window closes and the app settles on the honest answer
-    await expect(page.getByTestId('status-strip')).toContainText(/no browser wallet detected/i, {
+    await expect(page.getByTestId('connect-wallet').locator('xpath=..')).toBeVisible()
+    await expect(page.getByTestId('wallet-messages').first()).toContainText(/no browser wallet detected/i, {
       timeout: 10_000,
     })
     await expect(page.getByTestId('try-demo')).toBeEnabled()
@@ -189,7 +190,7 @@ test.describe('safety', () => {
     })
     await page.goto('/')
     await page.getByTestId('connect-wallet').click()
-    await expect(page.getByTestId('status-strip')).toContainText(/declined|cancelled|rejected/i, {
+    await expect(page.getByTestId('wallet-messages').first()).toContainText(/declined|cancelled|rejected/i, {
       timeout: 20_000,
     })
 

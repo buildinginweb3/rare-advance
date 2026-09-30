@@ -24,6 +24,7 @@ import { parseWeight } from '../math/rf'
 import { useDispatch, useSession, selectedFriend } from '../session/store'
 import { LOCAL_LP_ID, useMarket, useMarketDispatch } from '../session/marketStore'
 import { GROW_HEADLINE } from '../content/copy'
+import { FriendSwitcher } from '../components/FriendSwitcher'
 import type { GrowthAction } from '../types'
 
 /** Simple term: how much modeled WETH this Friend earns over the financing. */
@@ -38,13 +39,26 @@ export function GrowView() {
   const planner = useMemo(() => (friend ? plannerOptions(friend) : []), [friend])
   const [financeActionId, setFinanceActionId] = useState<string | null>(null)
   const [showRules, setShowRules] = useState(false)
+  const [switcherOpen, setSwitcherOpen] = useState(false)
 
   return (
     <div className="stack">
       <Panel dark>
-        <h1 className="h2" style={{ fontSize: 'clamp(14px, 4vw, 22px)' }}>
-          {GROW_HEADLINE}
-        </h1>
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <h1 className="h2" style={{ fontSize: 'clamp(14px, 4vw, 22px)', margin: 0 }}>
+            {GROW_HEADLINE}
+          </h1>
+          {friend ? (
+            <button
+              type="button"
+              className="btn btn-outline btn-sm"
+              onClick={() => setSwitcherOpen(true)}
+              data-testid="open-friend-switcher"
+            >
+              CHANGE FRIEND
+            </button>
+          ) : null}
+        </div>
         <p className="tiny" style={{ color: 'var(--gray-2)', maxWidth: 440, marginTop: 6 }}>
           Rare Friends can spend RF to increase a Friend&apos;s reward weight. Rare Advance explores whether
           future rewards could help finance that cost.
@@ -70,8 +84,12 @@ export function GrowView() {
         </Note>
       </Panel>
 
+      {switcherOpen ? (
+        <FriendSwitcher onClose={() => setSwitcherOpen(false)} />
+      ) : null}
+
       {!friend ? (
-        <Notice tone="info">Select a Friend on HOME to see what it can do next.</Notice>
+        <Notice tone="info">Choose a Friend to see what it can do next.</Notice>
       ) : null}
 
       {friend && actions.length === 0 ? (
@@ -271,6 +289,20 @@ function FinancingSheet({ action, market }: { action: GrowthAction; market: Retu
   )
 
   const offer = offers.find((o) => o.poolId === selectedPoolId) ?? offers[0] ?? null
+
+  // When nothing is offered, say WHY. "Try something else" is useless advice if
+  // the real obstacle is that every pool is too small for this action.
+  const financedAmount = cost - youPay
+  const biggestPool = useMemo(
+    () =>
+      market.pools.reduce(
+        (max, p) => (p.kind !== 'stream' && p.terms.growthMaxPositionWei > max ? p.terms.growthMaxPositionWei : max),
+        0n,
+      ),
+    [market.pools],
+  )
+  const nothingToFinance = financedAmount <= 0n
+  const tooBigForAnyPool = !nothingToFinance && financedAmount > biggestPool
   const pool = offer ? market.pools.find((p) => p.id === offer.poolId) : undefined
   const financed = offer ? offer.poolFinancesWei : cost - youPay
   const weightAfter = action.effect.weightAfterMicros
@@ -320,8 +352,21 @@ function FinancingSheet({ action, market }: { action: GrowthAction; market: Retu
       </div>
       {offers.length === 0 ? (
         <Notice tone="warn">
-          No pool currently offers these terms for this action. Try a different contribution, or create a pool in
-          LIQUIDITY.
+          {nothingToFinance ? (
+            <>You have chosen to pay the full cost yourself, so there is nothing left to finance. Lower your
+            contribution to see which pools would fund it.</>
+          ) : tooBigForAnyPool ? (
+            <>
+              No pool can fund an action this large. This action needs {formatRF(financedAmount, 2)} RF and the
+              largest eligible pool funds up to {formatRF(biggestPool, 0)} RF. Pay more yourself, or create a
+              bigger pool in LIQUIDITY.
+            </>
+          ) : (
+            <>
+              No pool offers these terms for this action. Try a different contribution, or create a pool in
+              LIQUIDITY.
+            </>
+          )}
         </Notice>
       ) : (
         <div className="stack" data-testid="growth-offers">

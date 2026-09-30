@@ -19,6 +19,19 @@ export function WalletMessages({ inline = false }: { inline?: boolean }) {
 
   const body = useMemo(() => {
     switch (s.status) {
+      // The states WHILE a wallet prompt is open. These used to render nothing,
+      // so pressing CONNECT WALLET appeared to do nothing at all.
+      case 'discovering':
+        return { tone: 'info' as const, text: 'Looking for an installed browser wallet…' }
+      case 'requesting-accounts':
+        return {
+          tone: 'info' as const,
+          text: 'Approve the connection request in your wallet to continue. Nothing is signed and no approval is requested.',
+        }
+      case 'switching-network':
+        return { tone: 'info' as const, text: `Switching your wallet to ${ROBINHOOD_CHAIN.chainName}…` }
+      case 'choosing':
+        return { tone: 'info' as const, text: 'Choose which wallet to connect.' }
       case 'unsupported':
         return { tone: 'warn' as const, text: `${s.error} ${s.hint ?? ''}` }
       case 'rejected':

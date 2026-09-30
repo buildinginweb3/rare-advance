@@ -64,7 +64,7 @@ test.describe('PUBLIC DEPLOYMENT', () => {
     // 4. the pool market agrees with itself
     await page.getByTestId('close-pool-detail').click()
     await expect(page.getByTestId('market-pool-count')).toContainText('5')
-    await expect(page.getByTestId('market-available')).toContainText('269,000 RF')
+    await expect(page.getByTestId('market-available')).toContainText('469,000 RF')
 
     // No console errors and no failed requests
     expect(consoleErrors, consoleErrors.join(' | ')).toEqual([])

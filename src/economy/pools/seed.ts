@@ -116,12 +116,15 @@ export const SEED_SPECS: SeedSpec[] = [
     kind: 'growth',
     creatorLpId: 'lp-b',
     creatorName: 'LP B',
-    capitalWei: RF(60_000),
+    // Deep enough in CASH to actually fund a promotion, which costs 90,000 RF.
+    capitalWei: RF(260_000),
     terms: defaultTerms({
       growthPremiumBps: 400n,
-      growthMaxFinanceBps: 8_000n,
+      growthMaxFinanceBps: 10_000n,
       growthRfRoutingBps: 8_000n,
       growthWethShareBps: 1_000n,
+      // Deep enough to fund a promotion as well as an upgrade.
+      growthMaxPositionWei: 250_000n * 10n ** 18n,
     }),
     access: publicAccess(),
   },
@@ -134,7 +137,7 @@ export const SEED_SPECS: SeedSpec[] = [
     capitalWei: RF(52_000),
     terms: defaultTerms({
       growthPremiumBps: 600n,
-      growthMaxFinanceBps: 9_000n,
+      growthMaxFinanceBps: 10_000n,
       growthRfRoutingBps: 6_500n,
       growthWethShareBps: 500n,
     }),
@@ -149,7 +152,7 @@ export const SEED_SPECS: SeedSpec[] = [
     capitalWei: RF(14_000),
     terms: defaultTerms({
       growthPremiumBps: 300n,
-      growthMaxFinanceBps: 7_000n,
+      growthMaxFinanceBps: 10_000n,
       growthRfRoutingBps: 7_500n,
       growthWethShareBps: 500n,
     }),
