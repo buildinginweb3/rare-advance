@@ -29,14 +29,30 @@ const STRANGER = '0x1111111111111111111111111111111111111111'
 /** ownerOf() answers, keyed by `collection:tokenId`. */
 const owners = new Map<string, string>()
 
-const readContract = vi.fn(async ({ address, functionName, args }: any) => {
+/** How many bundled aggregate3 reads happened, to prove batching really is used. */
+let multicallReads = 0
+
+const readContractImpl = async ({ address, functionName, args }: any): Promise<any> => {
+  const addr = String(address).toLowerCase()
+  if (functionName === 'aggregate3') {
+    multicallReads += 1
+    const calls = (args?.[0] ?? []) as { target: string; callData: string }[]
+    return calls.map((call) => {
+      // ownerOf(uint256) is 0x6352211e...
+      const tokenId = BigInt(`0x${call.callData.slice(10, 74)}`)
+      const owner = owners.get(`${String(call.target).toLowerCase()}:${tokenId.toString()}`)
+      if (!owner) return { success: false, returnData: '0x' }
+      return { success: true, returnData: `0x${'0'.repeat(24)}${owner.slice(2)}` }
+    })
+  }
   if (functionName !== 'ownerOf') throw new Error('unsupported read in test')
   const tokenId = String(args?.[0])
-  const key = `${String(address).toLowerCase()}:${tokenId}`
-  const owner = owners.get(key)
+  const owner = owners.get(`${addr}:${tokenId}`)
   if (!owner) throw new Error('execution reverted')
   return owner
-})
+}
+
+const readContract = vi.fn(readContractImpl)
 
 vi.mock('../src/chain/client', () => ({
   publicClient: () => ({ readContract }),
@@ -75,7 +91,11 @@ function stubIndexesUnreachable() {
 
 beforeEach(() => {
   owners.clear()
-  readContract.mockClear()
+  multicallReads = 0
+  // mockReset, not mockClear: a test that forces RPC failures must not leak its
+  // implementation into the next test.
+  readContract.mockReset()
+  readContract.mockImplementation(readContractImpl)
   stubIndexesUnreachable()
 })
 
@@ -92,25 +112,35 @@ describe('onchain sweep', () => {
     expect(result.friends.every((f) => f.ownershipVerified)).toBe(true)
   })
 
-  it('does not claim a wallet with nothing is fully cleared', async () => {
+  it('reports a fully swept wallet with nothing as exhaustive', async () => {
     owners.set(`${GENESIS_ADDR}:249`, OWNER)
 
     const result = await discovery.discoverFriends(STRANGER, '')
 
     expect(result.friends).toHaveLength(0)
-    // Genesis is fully enumerated, but Generations is not, so the empty result
-    // is NOT authoritative and must be reported as such.
+    // Every token id of both collections was read, so "none" is a real answer.
+    expect(result.exhaustive).toBe(true)
+  })
+
+  it('is not exhaustive when a bundled batch cannot be read', async () => {
+    // A flaky RPC must never turn into "this wallet owns nothing". Each batch is
+    // retried once, so both attempts of a batch must fail for the sweep to be
+    // unproven. Genesis and Generations now run concurrently, so failing every
+    // request is the reliable way to force the failure path.
+    readContract.mockRejectedValue(new Error('rpc down'))
+    const result = await discovery.discoverFriends(STRANGER, '')
     expect(result.exhaustive).toBe(false)
   })
 
-  it('never claims a bounded Generations sweep is exhaustive', async () => {
-    // Generations has no owner index, so a wallet holding only Generations can
-    // never be fully cleared. `exhaustive` must be false so the UI says
-    // "not verified" instead of falsely claiming the wallet holds nothing.
-    const result = await discovery.discoverFriends(STRANGER, '')
+  it('bundles ownerOf reads through Multicall3 instead of one call per id', async () => {
+    owners.set(`${GENERATIONS_ADDR}:7`, OWNER)
+    const result = await discovery.discoverFriends(OWNER, '')
 
-    expect(result.exhaustive).toBe(false)
-    expect(result.notes.join(' ')).toMatch(/bounded|best-effort/i)
+    // The whole 345,000-id range must be covered in a small number of bundled
+    // requests, otherwise discovery could never run in a browser.
+    expect(multicallReads).toBeGreaterThan(0)
+    expect(multicallReads).toBeLessThan(120)
+    expect(result.friends.some((f) => f.collection === 'Generations')).toBe(true)
   })
 
   it('finds a Generations holder inside the swept window', async () => {

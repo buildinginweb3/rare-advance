@@ -58,3 +58,16 @@ export const TRANSFER_TOPIC =
 
 /** Genesis is a fixed cap of 1,024, so its whole id space is sweepable. */
 export const GENESIS_MAX_TOKEN_ID = 1024
+
+/**
+ * Multicall3 `aggregate3`. Bundling `ownerOf` reads this way is what makes an
+ * exhaustive Generations sweep possible from a browser: the public RPC rejects
+ * `eth_getLogs` (HTTP 403) and the contract exposes no owner index, so the only
+ * option is to ask about many token ids per request.
+ */
+export const multicall3Aggregate3Abi = parseAbi([
+  'function aggregate3((address target, bool allowFailure, bytes callData)[] calls) payable returns ((bool success, bytes returnData)[] returnData)',
+])
+
+/** Canonical deterministic Multicall3 address, deployed on Robinhood Chain. */
+export const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11'

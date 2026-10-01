@@ -31,6 +31,7 @@ export function DashboardView() {
   const discoveryExhaustive = state.live?.discoveryExhaustive ?? false
   // Name the real reason rather than a generic one.
   const liveError = state.live?.status === 'error' ? state.live.error : null
+  const verifying = state.live?.status === 'loading' && !liveError
 
   const demo = state.mode === 'demo'
   const friends = state.friends
@@ -52,10 +53,16 @@ export function DashboardView() {
           {friends.length === 0 ? (
             <div className="empty-state">
               <span className="h3">
-                {discoveryExhaustive ? 'NO RARE FRIENDS FOUND' : 'FRIENDS NOT VERIFIED'}
+                {verifying
+                  ? 'VERIFYING YOUR FRIENDS'
+                  : discoveryExhaustive
+                    ? 'NO RARE FRIENDS FOUND'
+                    : 'FRIENDS NOT VERIFIED'}
               </span>
               <p className="tiny" data-testid="empty-explanation">
-                {liveError
+                {verifying
+                  ? 'Rare Friends ownership is being checked directly onchain. Every token id of both collections is verified, which can take about a minute on the public RPC. This is not a result yet, so no holdings are shown.'
+                  : liveError
                   ? `Rare Friends ownership could not be verified because the Robinhood Chain RPC did not answer (${liveError}). Nothing about this wallet has been confirmed yet, so no holdings are shown.`
                   : discoveryExhaustive
                     ? 'Rare Advance supports Rare Friends Genesis and Rare Friends Generations. Every token id of both collections was checked directly onchain and none of them is held by this wallet.'

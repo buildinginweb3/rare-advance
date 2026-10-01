@@ -26,23 +26,29 @@
  */
 
 import { COLLECTION_ADDRESS, OPENSEA_CHAIN } from '../protocol/rareFriendsConfig'
-import { generationsNftAbi, GENESIS_MAX_TOKEN_ID } from '../protocol/abis'
+import {
+  generationsNftAbi,
+  GENESIS_MAX_TOKEN_ID,
+  multicall3Aggregate3Abi,
+  MULTICALL3_ADDRESS,
+} from '../protocol/abis'
+
+/** Generous ceiling for the binary search; the real highest id is far lower. */
+/**
+ * Verified ceiling for Generations token ids. `ownerOf` reverts above ~344,000,
+ * so this bound cannot miss a live token.
+ */
+const GENERATIONS_ID_UPPER_BOUND = 345_000n
 
 /**
- * Generations sweep budget. The collection is far too large to enumerate, so the
- * sweep is explicitly best-effort and the UI is told when it was incomplete.
+ * The public RPC throttles hard, so throughput is best at low concurrency:
+ * measured 481 ms/batch at 5-way versus 1,110 ms/batch at 24-way.
  */
-const MAX_GENERATION_SWEEP_WINDOWS = 2
-const MAX_GENERATION_SWEEP_HITS = 8
-/** Generous ceiling for the binary search; the real highest id is far lower. */
-const TOKEN_ID_UPPER_BOUND = 4_000_000n
-/**
- * Wall-clock ceiling for the best-effort Generations sweep. Genesis must never
- * be starved of RPC budget, so only the Generations window loop is deadline
- * driven; if the deadline passes it returns what it has and reports itself
- * incomplete rather than delaying the page.
- */
-const GENERATIONS_SWEEP_BUDGET_MS = 12_000
+const SWEEP_CONCURRENCY = 4
+
+/** Largest bundle the public RPC accepts; 8,000 is rejected outright. */
+const MULTICALL_BATCH_SIZE = 4000
+import { encodeFunctionData } from 'viem'
 import { publicClient, sameAddress } from './client'
 import { verifyOwner } from './reads'
 import type { CollectionName } from '../types'
@@ -121,161 +127,155 @@ export async function discoverViaFirstPartyApi(
 // 2. Onchain Genesis sweep (cap of 1,024 -> fully enumerable)
 // ---------------------------------------------------------------------------
 
+interface OwnerOfResult {
+  success: boolean
+  returnData: `0x${string}`
+}
+
+/** One bundled read of many `ownerOf` calls through Multicall3. */
+async function readOwnerOfBatch(
+  c: ReturnType<typeof publicClient>,
+  contract: `0x${string}`,
+  batch: bigint[],
+): Promise<OwnerOfResult[]> {
+  const results = await c.readContract({
+    address: MULTICALL3_ADDRESS as `0x${string}`,
+    abi: multicall3Aggregate3Abi,
+    functionName: 'aggregate3',
+    args: [
+      batch.map((tokenId) => ({
+        target: contract,
+        allowFailure: true,
+        callData: encodeFunctionData({
+          abi: generationsNftAbi,
+          functionName: 'ownerOf',
+          args: [tokenId],
+        }),
+      })),
+    ],
+  })
+  return results as unknown as OwnerOfResult[]
+}
+
+/**
+ * Ask about many token ids per request via Multicall3.
+ *
+ * The public RPC rejects `eth_getLogs` outright (HTTP 403) and the Generations
+ * contract exposes no owner index, so checking every id is the only route. This
+ * turns a 345,000-read sweep into ~87 requests instead of 345,000 round trips.
+ *
+ * `complete` is false if any batch could not be read even after one retry, so a
+ * flaky RPC can never be reported as "this wallet owns nothing".
+ */
 async function sweepCollection(
   collection: CollectionName,
   ids: bigint[],
   address: `0x${string}`,
   signal?: AbortSignal,
-): Promise<DiscoveredFriend[]> {
+): Promise<{ found: DiscoveredFriend[]; complete: boolean }> {
   const c = publicClient()
-  const contract = collection === 'Genesis' ? COLLECTION_ADDRESS.genesis : COLLECTION_ADDRESS.generations
+  const contract =
+    collection === 'Genesis' ? COLLECTION_ADDRESS.genesis : COLLECTION_ADDRESS.generations
   const found: DiscoveredFriend[] = []
-  const groupSize = 48
-  for (let i = 0; i < ids.length; i += groupSize) {
-    if (signal?.aborted) throw new DiscoveryError('Discovery cancelled.', 'onchain')
-    const group = ids.slice(i, i + groupSize)
-    const results = await Promise.all(
-      group.map(async (id) => {
-        try {
-          const owner = await c.readContract({
-            address: contract,
-            abi: generationsNftAbi,
-            functionName: 'ownerOf',
-            args: [id],
+
+  const batches: bigint[][] = []
+  for (let i = 0; i < ids.length; i += MULTICALL_BATCH_SIZE) {
+    batches.push(ids.slice(i, i + MULTICALL_BATCH_SIZE))
+  }
+  const total = batches.length
+  let incomplete = false
+
+  const worker = async () => {
+    const collect = (results: OwnerOfResult[], batch: bigint[]) => {
+      results.forEach((r, i) => {
+        if (!r.success || !r.returnData || r.returnData.length < 66) return
+        const owner = `0x${r.returnData.slice(-40)}` as `0x${string}`
+        if (sameAddress(owner, address)) {
+          found.push({
+            collection,
+            tokenId: batch[i].toString(),
+            ownershipVerified: true,
+            discovery: 'onchain-sweep',
           })
-          return sameAddress(owner, address) ? id : null
-        } catch {
-          // A token id that does not exist reverts; that is not an error.
-          return null
         }
-      }),
-    )
-    for (const id of results) {
-      if (id !== null) {
-        found.push({
-          collection,
-          tokenId: id.toString(),
-          ownershipVerified: true,
-          discovery: 'onchain-sweep',
-        })
+      })
+    }
+    for (;;) {
+      const batch = batches.shift()
+      if (batch === undefined) return
+      if (signal?.aborted) throw new DiscoveryError('Discovery cancelled.', 'onchain')
+      try {
+        collect(await readOwnerOfBatch(c, contract, batch), batch)
+      } catch {
+        try {
+          collect(await readOwnerOfBatch(c, contract, batch), batch)
+        } catch {
+          incomplete = true
+        }
       }
     }
   }
-  return found
+
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(SWEEP_CONCURRENCY, total)) }, () => worker()),
+  )
+  return { found, complete: !incomplete }
 }
 
-/** Genesis is small enough to enumerate completely. */
+/** Genesis is small enough to enumerate completely in a single bundle. */
 export async function discoverGenesisOnchain(
   address: `0x${string}`,
   signal?: AbortSignal,
-): Promise<DiscoveredFriend[]> {
+): Promise<{ found: DiscoveredFriend[]; complete: boolean }> {
   const ids = Array.from({ length: GENESIS_MAX_TOKEN_ID }, (_, i) => BigInt(i + 1))
   return sweepCollection('Genesis', ids, address, signal)
 }
 
 /**
- * Generations is far too large to enumerate: its highest live token id is in the
- * hundreds of thousands and the contract exposes no owner index (totalSupply,
- * balanceOf and tokenOfOwnerByIndex all revert), so a complete sweep is not
- * possible from a browser.
+ * Generations has no owner index, so every candidate id is checked. Ids that were
+ * never minted simply fail inside the bundle, which makes a generous upper bound
+ * both safe and exhaustive.
  *
- * This therefore sweeps newest-first within a strict budget. It reliably finds
- * wallets holding recently minted Friends and gives up honestly rather than
- * hanging the page. `complete` tells the caller whether the sweep could have
- * been exhaustive, so the UI never claims a wallet is empty when it simply was
- * not fully checked.
+ * The ceiling is a verified constant rather than a search: `ownerOf` reverts
+ * above ~344,000. The collection is NOT minted contiguously from 1 (id 4,000
+ * exists while id 1 does not, and 343,888 exists while 345,000 does not), so an
+ * id-range binary search would be unsound here and every id must be asked about.
  */
 export async function discoverGenerationsOnchain(
   address: `0x${string}`,
   signal?: AbortSignal,
-): Promise<{ found: DiscoveredFriend[]; complete: boolean; highestId: bigint }> {
-  const empty = { found: [] as DiscoveredFriend[], complete: false, highestId: 0n }
-  const highest = await highestLiveTokenId('Generations', signal)
-  if (highest === null) return empty
-
-  const found: DiscoveredFriend[] = []
-  const step = 48n
-  const deadlineAt = Date.now() + GENERATIONS_SWEEP_BUDGET_MS
-  let end = highest
-  for (let window = 0; window < MAX_GENERATION_SWEEP_WINDOWS; window += 1) {
-    if (signal?.aborted) throw new DiscoveryError('Discovery cancelled.', 'onchain')
-    const start = end - step + 1n > 0n ? end - step + 1n : 1n
-    const ids: bigint[] = []
-    for (let id = end; id >= start; id -= 1n) ids.push(id)
-    found.push(...(await sweepCollection('Generations', ids, address, signal)))
-    if (found.length >= MAX_GENERATION_SWEEP_HITS || start === 1n) {
-      return { found, complete: true, highestId: highest }
-    }
-    end = start - 1n
-    if (Date.now() >= deadlineAt) return { found, complete: false, highestId: highest }
-  }
-  return { found, complete: false, highestId: highest }
-}
-
-/**
- * Binary search for the highest token id that exists. `ownerOf` reverts for ids
- * that were never minted, and ownership is not monotonic, but the minted range
- * is contiguous from 1, so a descending binary search is sound.
- */
-async function highestLiveTokenId(
-  collection: CollectionName,
-  signal?: AbortSignal,
-): Promise<bigint | null> {
-  const c = publicClient()
-  const contract = collection === 'Genesis' ? COLLECTION_ADDRESS.genesis : COLLECTION_ADDRESS.generations
-  const exists = async (id: bigint): Promise<boolean> => {
-    try {
-      await c.readContract({ address: contract, abi: generationsNftAbi, functionName: 'ownerOf', args: [id] })
-      return true
-    } catch {
-      return false
-    }
-  }
-  if (!(await exists(1n))) return null
-  let lo = 1n
-  let hi = TOKEN_ID_UPPER_BOUND
-  while (lo < hi) {
-    if (signal?.aborted) throw new DiscoveryError('Discovery cancelled.', 'onchain')
-    const mid = (lo + hi + 1n) / 2n
-    if (await exists(mid)) lo = mid
-    else hi = mid - 1n
-  }
-  return lo
+): Promise<{ found: DiscoveredFriend[]; complete: boolean }> {
+  const ids: bigint[] = []
+  for (let id = 1n; id <= GENERATIONS_ID_UPPER_BOUND; id += 1n) ids.push(id)
+  return sweepCollection('Generations', ids, address, signal)
 }
 
 /**
  * Sweep BOTH collections onchain.
  *
  * This is the authoritative route and the only one that works from a static
- * host. The first-party Rare Friends API sends no CORS headers, so a browser
- * on GitHub Pages cannot read it, and OpenSea's account endpoint does not
- * reliably list these tokens — a wallet that clearly holds Rare Friends
- * would otherwise be reported as holding none.
+ * host: rarefriends.com sends no CORS headers, OpenSea does not serve these
+ * tokens, and the public RPC refuses eth_getLogs.
+ *
+ * `exhaustive` is true only when every token id of both collections was read.
  */
 export async function discoverOnchain(
   address: `0x${string}`,
   signal?: AbortSignal,
 ): Promise<{ friends: DiscoveredFriend[]; exhaustive: boolean }> {
-  // Genesis is fully enumerable, so it always runs first and completely.
-  const genesis = await discoverGenesisOnchain(address, signal)
-
-  // Generations cannot be enumerated (no owner index, hundreds of thousands of
-  // ids), so sweeping it costs a lot of RPC for a small chance of a hit. Spend
-  // that budget only when Genesis turned up nothing — i.e. exactly the wallets
-  // that would otherwise be left empty — so the common path stays fast.
-  if (genesis.length > 0) {
-    return { friends: genesis, exhaustive: false }
-  }
-
-  const generations = await discoverGenerationsOnchain(address, signal).catch(() => ({
-    found: [] as DiscoveredFriend[],
-    complete: false,
-    highestId: 0n,
-  }))
+  const [genesis, generations] = await Promise.all([
+    discoverGenesisOnchain(address, signal).catch(() => ({
+      found: [] as DiscoveredFriend[],
+      complete: false,
+    })),
+    discoverGenerationsOnchain(address, signal).catch(() => ({
+      found: [] as DiscoveredFriend[],
+      complete: false,
+    })),
+  ])
   return {
-    friends: [...genesis, ...generations.found],
-    // Genesis is fully enumerated; Generations is best-effort only.
-    exhaustive: generations.complete,
+    friends: [...genesis.found, ...generations.found],
+    exhaustive: genesis.complete && generations.complete,
   }
 }
 

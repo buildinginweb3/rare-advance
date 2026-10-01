@@ -95,6 +95,22 @@ export function useLiveData(address: `0x${string}` | null) {
         /* prices are decorative; protocol state is already live */
       }
 
+      // Ownership is settled by an exhaustive onchain sweep of every Generations
+      // token id, which takes tens of seconds against the public RPC. Publish the
+      // protocol state immediately so the UI can say it is verifying, instead of
+      // showing an empty "not verified" panel for the whole sweep.
+      setResult({
+        friends: [],
+        live: { ...live, status: 'loading' },
+        notes: [
+          'Verifying Rare Friends ownership directly onchain. Every token id of both collections is checked, which can take about a minute.',
+        ],
+        discoveryExhaustive: false,
+        route: 'onchain-sweep',
+        totalVerified: 0,
+        readCount: 0,
+      })
+
       const discovery = await discoverFriends(address, OPENSEA_KEY, ac.signal)
       const now = Date.now()
 
