@@ -284,10 +284,17 @@ export async function discoverOnchain(
 // ---------------------------------------------------------------------------
 
 /**
- * OpenSea's v2 "NFTs by account" endpoint is used only when the first-party
- * index is unavailable AND a key is configured. Ownership is still verified
- * onchain afterwards. If OpenSea is unavailable this returns an empty list and
- * the caller degrades honestly.
+ * OpenSea's v2 "NFTs by account" endpoint, used only when the first-party index
+ * is unavailable AND a key is configured. Ownership is still verified onchain
+ * afterwards. If OpenSea is unavailable this returns an empty list and the
+ * caller degrades honestly.
+ *
+ * NOTE the path: it is chain-scoped and uses the singular `account`
+ * (`/api/v2/chain/{chain}/account/{address}/nfts`). The un-scoped
+ * `/api/v2/accounts/{address}/nfts` path does not exist and returns 404, which
+ * previously made every wallet fall through to the slow exhaustive onchain
+ * sweep. Verified 2026-09-30: this endpoint returns a Robinhood Chain holder's
+ * Rare Friends in a single request.
  */
 export async function discoverViaOpenSea(
   address: `0x${string}`,
@@ -296,9 +303,10 @@ export async function discoverViaOpenSea(
 ): Promise<DiscoveredFriend[]> {
   if (!key) return []
   const out: DiscoveredFriend[] = []
-  let next: string | null = `${BASE_V2}/accounts/${address}/nfts?limit=50`
+  let next: string | null =
+    `${BASE_V2}/chain/${OPENSEA_CHAIN}/account/${address}/nfts?limit=50`
   let pages = 0
-  while (next && pages < 4) {
+  while (next && pages < 20) {
     if (signal?.aborted) throw new DiscoveryError('Discovery cancelled.', 'api')
     const res = await fetch(next, { headers: { 'X-API-KEY': key, accept: 'application/json' }, signal })
     if (!res.ok) break
@@ -385,11 +393,10 @@ export async function discoverFriends(
   }
 
   if (candidates.length === 0) {
-    // The route that needs no index, no API key and no CORS: sweep both
-    // collection contracts directly. This is the ONLY discovery route that
-    // reliably works from a static host, because rarefriends.com sends no
-    // access-control headers and OpenSea's account endpoint does not reliably
-    // list these tokens.
+    // Last resort, and the only route that needs no index at all: sweep both
+    // collection contracts directly. This is what runs when no index answered,
+    // because rarefriends.com sends no CORS headers and cannot be read from a
+    // static host.
     try {
       const onchain = await discoverOnchain(address, signal)
       exhaustive = onchain.exhaustive
@@ -407,11 +414,13 @@ export async function discoverFriends(
     }
   }
 
-  if (!exhaustive) {
+  if (route === 'opensea') {
+    notes.push('Listed by the OpenSea index, with every token confirmed by a direct onchain ownerOf read.')
+  } else if (!exhaustive && (route === 'none' || route === 'onchain-sweep')) {
     // Say plainly that the check was bounded, so nobody reads "none found" as
     // "this wallet holds nothing".
     notes.push(
-      'Generations has hundreds of thousands of token ids and no owner index, so only a bounded onchain sweep was possible from this browser. Rare Friends holdings here are best-effort, not exhaustive.',
+      'No NFT index answered, so ownership was checked by sweeping the collection contracts onchain. Generations has no owner index, so this could not be exhaustive: Rare Friends holdings here are best-effort.',
     )
   }
 

@@ -10,8 +10,9 @@
  *    sends NO access-control-allow-origin header, so a browser running the
  *    static GitHub Pages build cannot read it. The same-origin proxy path the
  *    app requests returns 404 on Pages.
- *  - OpenSea's /api/v2/accounts/{address}/nfts does not serve these tokens
- *    (NOT_FOUND / empty), so it cannot be relied on either.
+ *  - OpenSea serves them, but only on the chain-scoped path
+ *    /api/v2/chain/robinhood/account/{address}/nfts. The un-scoped
+ *    /api/v2/accounts/{address}/nfts path does not exist and returns 404.
  *  - The Generations contract reverts on totalSupply(), balanceOf() and
  *    tokenOfOwnerByIndex(), so it has NO owner index, and its highest live
  *    token id is in the hundreds of thousands. It cannot be enumerated.
@@ -190,6 +191,40 @@ describe('onchain sweep', () => {
     )
     expect(result.friends.map((f) => f.tokenId).sort()).toEqual(['5', '9'])
   })
+
+describe('OpenSea route', () => {
+  it('uses the chain-scoped account path that actually exists', async () => {
+    const urls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: any) => {
+        const url = String(input)
+        urls.push(url)
+        if (url.includes('opensea.io')) {
+          return new Response(
+            JSON.stringify({
+              nfts: [{ contract: '0x14C49e6118F46525dE9ab41a51cBAA3c6EBF181D', identifier: '84370' }],
+              next: null,
+            }),
+            { status: 200 },
+          )
+        }
+        return new Response('not found', { status: 404 })
+      }),
+    )
+    owners.set(`${GENERATIONS_ADDR}:84370`, OWNER)
+
+    const result = await discovery.discoverFriends(OWNER, 'test-key')
+
+    const seaUrl = urls.find((u) => u.includes('opensea.io'))
+    expect(seaUrl).toContain('/api/v2/chain/robinhood/account/')
+    expect(seaUrl).not.toContain('/api/v2/accounts/')
+    expect(result.route).toBe('opensea')
+    expect(result.friends.map((f) => f.tokenId)).toEqual(['84370'])
+    // Ownership is still confirmed onchain, never trusted from the index.
+    expect(result.friends[0].ownershipVerified).toBe(true)
+  })
+})
 
 describe('exhaustiveness is never claimed without proof', () => {
   it('is false while loading and false when the live read throws', async () => {
