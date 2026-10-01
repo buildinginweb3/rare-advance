@@ -55,7 +55,9 @@ const emptyLive: LiveDataState = {
   totalActiveWeightProvenance: 'onchain',
   rfStream: { pendingWei: null, rateWeiPerSec: null, finishUnix: null, remainderWei: null },
   wethStream: { pendingWei: null, rateWeiPerSec: null, finishUnix: null, remainderWei: null },
-  prices: { rfUsd: null, ethUsd: null }, discoveryExhaustive: true,
+  prices: { rfUsd: null, ethUsd: null },
+  // Unproven until discovery actually completes.
+  discoveryExhaustive: false,
 }
 
 export function useLiveData(address: `0x${string}` | null) {
@@ -255,7 +257,8 @@ export function useLiveData(address: `0x${string}` | null) {
         friends: [],
         live: { ...emptyLive, status: 'error', error: (err as Error).message },
         notes: [],
-        discoveryExhaustive: true,
+        // Nothing was verified, so the empty list must never read as exhaustive.
+        discoveryExhaustive: false,
         route: 'none',
         totalVerified: 0,
         readCount: 0,

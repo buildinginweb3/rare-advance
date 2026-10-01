@@ -160,4 +160,23 @@ describe('onchain sweep', () => {
     )
     expect(result.friends.map((f) => f.tokenId).sort()).toEqual(['5', '9'])
   })
+
+describe('exhaustiveness is never claimed without proof', () => {
+  it('is false while loading and false when the live read throws', async () => {
+    const mod = await import('../src/session/useLiveData')
+    const source = await import('node:fs').then((fs) =>
+      fs.readFileSync(new URL('../src/session/useLiveData.ts', import.meta.url), 'utf8'),
+    )
+
+    // The loading placeholder must not claim an exhaustive check.
+    expect(source).toMatch(/prices: \{ rfUsd: null, ethUsd: null \},\s*\n\s*\/\/ Unproven[\s\S]*?discoveryExhaustive: false/)
+
+    // The catch block that handles a failed RPC read must not claim one either.
+    const catchBlock = source.slice(source.indexOf('} catch (err) {'))
+    expect(catchBlock).toMatch(/discoveryExhaustive: false/)
+
+    expect(typeof mod.useLiveData).toBe('function')
+  })
+})
+
 })

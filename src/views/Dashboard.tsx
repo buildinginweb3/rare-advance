@@ -28,7 +28,9 @@ export function DashboardView() {
   const friend = selectedFriend(state)
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
-  const discoveryExhaustive = state.live?.discoveryExhaustive ?? true
+  const discoveryExhaustive = state.live?.discoveryExhaustive ?? false
+  // Name the real reason rather than a generic one.
+  const liveError = state.live?.status === 'error' ? state.live.error : null
 
   const demo = state.mode === 'demo'
   const friends = state.friends
@@ -53,9 +55,11 @@ export function DashboardView() {
                 {discoveryExhaustive ? 'NO RARE FRIENDS FOUND' : 'FRIENDS NOT VERIFIED'}
               </span>
               <p className="tiny" data-testid="empty-explanation">
-                {discoveryExhaustive
-                  ? 'Rare Advance supports Rare Friends Genesis and Rare Friends Generations. Every token id of both collections was checked directly onchain and none of them is held by this wallet.'
-                  : 'Rare Advance supports Rare Friends Genesis and Rare Friends Generations. Generations has hundreds of thousands of token ids and no onchain owner index, so this browser could only check a bounded range. This wallet may still hold Friends that were not reachable here.'}
+                {liveError
+                  ? `Rare Friends ownership could not be verified because the Robinhood Chain RPC did not answer (${liveError}). Nothing about this wallet has been confirmed yet, so no holdings are shown.`
+                  : discoveryExhaustive
+                    ? 'Rare Advance supports Rare Friends Genesis and Rare Friends Generations. Every token id of both collections was checked directly onchain and none of them is held by this wallet.'
+                    : 'Rare Advance supports Rare Friends Genesis and Rare Friends Generations. Generations has hundreds of thousands of token ids and no onchain owner index, so this browser could only check a bounded range. This wallet may still hold Friends that were not reachable here.'}
               </p>
               <button
                 type="button"
