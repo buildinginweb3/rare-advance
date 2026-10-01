@@ -28,6 +28,7 @@ export function DashboardView() {
   const friend = selectedFriend(state)
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
+  const discoveryExhaustive = state.live?.discoveryExhaustive ?? true
 
   const demo = state.mode === 'demo'
   const friends = state.friends
@@ -48,10 +49,13 @@ export function DashboardView() {
         <Panel title="MY FRIENDS" testId="home-empty">
           {friends.length === 0 ? (
             <div className="empty-state">
-              <span className="h3">NO RARE FRIENDS FOUND</span>
-              <p className="tiny">
-                Rare Advance currently supports Rare Friends Genesis and Rare Friends Generations. This wallet
-                does not hold any, or they could not be verified with a direct onchain read.
+              <span className="h3">
+                {discoveryExhaustive ? 'NO RARE FRIENDS FOUND' : 'FRIENDS NOT VERIFIED'}
+              </span>
+              <p className="tiny" data-testid="empty-explanation">
+                {discoveryExhaustive
+                  ? 'Rare Advance supports Rare Friends Genesis and Rare Friends Generations. Every token id of both collections was checked directly onchain and none of them is held by this wallet.'
+                  : 'Rare Advance supports Rare Friends Genesis and Rare Friends Generations. Generations has hundreds of thousands of token ids and no onchain owner index, so this browser could only check a bounded range. This wallet may still hold Friends that were not reachable here.'}
               </p>
               <button
                 type="button"

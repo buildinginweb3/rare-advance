@@ -26,6 +26,11 @@ export interface LiveLoadResult {
   friends: FriendPosition[]
   live: LiveDataState
   notes: string[]
+  /**
+   * False when not every token id could be checked from the browser. An empty
+   * list then means "unverified", not "holds nothing".
+   */
+  discoveryExhaustive: boolean
   route: string
   /** how many Friends were verified onchain in total */
   totalVerified: number
@@ -50,7 +55,7 @@ const emptyLive: LiveDataState = {
   totalActiveWeightProvenance: 'onchain',
   rfStream: { pendingWei: null, rateWeiPerSec: null, finishUnix: null, remainderWei: null },
   wethStream: { pendingWei: null, rateWeiPerSec: null, finishUnix: null, remainderWei: null },
-  prices: { rfUsd: null, ethUsd: null },
+  prices: { rfUsd: null, ethUsd: null }, discoveryExhaustive: true,
 }
 
 export function useLiveData(address: `0x${string}` | null) {
@@ -236,6 +241,7 @@ export function useLiveData(address: `0x${string}` | null) {
         friends,
         live,
         notes: discovery.notes,
+        discoveryExhaustive: discovery.exhaustive,
         route: discovery.route,
         totalVerified: discovery.friends.length,
         readCount: friends.length,
@@ -249,6 +255,7 @@ export function useLiveData(address: `0x${string}` | null) {
         friends: [],
         live: { ...emptyLive, status: 'error', error: (err as Error).message },
         notes: [],
+        discoveryExhaustive: true,
         route: 'none',
         totalVerified: 0,
         readCount: 0,

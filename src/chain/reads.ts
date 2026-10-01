@@ -100,7 +100,7 @@ export async function readProtocolState(): Promise<LiveDataState> {
       finishUnix: weth[2],
       remainderWei: weth[5],
     },
-    prices: { rfUsd: null, ethUsd: null },
+    prices: { rfUsd: null, ethUsd: null }, discoveryExhaustive: true,
   }
 }
 

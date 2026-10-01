@@ -171,7 +171,7 @@ function demoStreamState(nowMs: number): LiveDataState {
       finishUnix: finish + 1n,
       remainderWei: DEMO_WETH_STREAM_REMAINDER,
     },
-    prices: { rfUsd: 0.00117, ethUsd: 2669.54 },
+    prices: { rfUsd: 0.00117, ethUsd: 2669.54 }, discoveryExhaustive: true,
   }
 }
 

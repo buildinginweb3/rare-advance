@@ -261,6 +261,11 @@ export interface LiveDataState {
     remainderWei: bigint | null
   }
   prices: { rfUsd: number | null; ethUsd: number | null }
+  /**
+   * False when not every Rare Friends token id could be checked from this
+   * browser. An empty friend list then means "unverified", not "holds nothing".
+   */
+  discoveryExhaustive: boolean
 }
 
 export type SessionMode = 'demo' | 'live'
